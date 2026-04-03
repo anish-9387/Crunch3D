@@ -1,0 +1,8 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pymeshlab==2023.12.post3
+trimesh==4.5.3
+numpy==1.26.4
+pydantic==2.10.4
+aiofiles==24.1.0
