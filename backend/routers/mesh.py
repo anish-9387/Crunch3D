@@ -1,3 +1,4 @@
+import json
 import time
 import zipfile
 import io
@@ -9,6 +10,7 @@ from ..models.schemas import (
     UploadResponse, OptimizeRequest, OptimizeResponse, JobStatus,
     FeedbackRequest, FeedbackResponse, TrainingSummaryResponse, TrainingBootstrapResponse,
     OptimizationRecommendationResponse,
+    MeshStats,
 )
 from ..services.file_handler import (
     generate_job_id, get_upload_path, get_processed_path,
@@ -39,6 +41,101 @@ PRESET_TARGETS = {
     "multi_scene": 220000,
     "mobile_hero": 45000,
 }
+
+JOB_META_FILENAME = "_job_meta.json"
+UPLOAD_BASE_DIR = Path(__file__).resolve().parent.parent / "uploads"
+
+
+def _job_meta_path(job_id: str) -> Path:
+    return UPLOAD_BASE_DIR / job_id / JOB_META_FILENAME
+
+
+def _serialize_job_value(value):
+    if isinstance(value, dict):
+        return {k: _serialize_job_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_serialize_job_value(v) for v in value]
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    return value
+
+
+def _deserialize_job(payload: dict) -> dict:
+    job = dict(payload)
+    for key in ("original_stats", "optimized_stats"):
+        stats_payload = job.get(key)
+        if isinstance(stats_payload, dict):
+            try:
+                job[key] = MeshStats(**stats_payload)
+            except Exception:
+                # Keep raw payload if schema reconstruction fails.
+                pass
+    return job
+
+
+def _save_job(job_id: str) -> None:
+    job = jobs.get(job_id)
+    if not job:
+        return
+
+    meta_path = _job_meta_path(job_id)
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(_serialize_job_value(job), f, ensure_ascii=True)
+
+
+def _recover_job_from_filesystem(job_id: str) -> dict | None:
+    upload_dir = UPLOAD_BASE_DIR / job_id
+    if not upload_dir.exists() or not upload_dir.is_dir():
+        return None
+
+    mesh_files = [
+        p
+        for p in upload_dir.iterdir()
+        if p.is_file() and p.name != JOB_META_FILENAME and validate_extension(p.name)
+    ]
+    if not mesh_files:
+        return None
+
+    input_file = max(mesh_files, key=lambda p: p.stat().st_mtime)
+    try:
+        stats = analyze_mesh(input_file)
+    except Exception:
+        return None
+
+    return {
+        "status": "uploaded",
+        "progress": 100,
+        "stage": "Recovered from disk",
+        "filename": input_file.name,
+        "filepath": str(input_file),
+        "original_stats": stats,
+    }
+
+
+def _get_job(job_id: str) -> dict:
+    cached = jobs.get(job_id)
+    if cached:
+        return cached
+
+    meta_path = _job_meta_path(job_id)
+    if meta_path.exists():
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            recovered = _deserialize_job(payload)
+            jobs[job_id] = recovered
+            return recovered
+        except Exception:
+            pass
+
+    recovered = _recover_job_from_filesystem(job_id)
+    if recovered is not None:
+        jobs[job_id] = recovered
+        _save_job(job_id)
+        return recovered
+
+    raise HTTPException(404, "Job not found")
 
 
 def _risk_level(face_count: int) -> str:
@@ -125,6 +222,7 @@ async def upload_mesh(file: UploadFile = File(...)):
         "filepath": str(filepath),
         "original_stats": stats,
     }
+    _save_job(job_id)
 
     return UploadResponse(
         job_id=job_id,
@@ -136,9 +234,7 @@ async def upload_mesh(file: UploadFile = File(...)):
 
 @router.post("/optimize", response_model=OptimizeResponse)
 async def optimize_mesh(request: OptimizeRequest):
-    job = jobs.get(request.job_id)
-    if not job:
-        raise HTTPException(404, "Job not found")
+    job = _get_job(request.job_id)
 
     # Platform presets
     presets = PRESET_TARGETS
@@ -238,6 +334,7 @@ async def optimize_mesh(request: OptimizeRequest):
         jobs[request.job_id]["reduction_percent"] = reduction
         jobs[request.job_id]["processing_time_seconds"] = processing_time
         jobs[request.job_id]["source_reason"] = source_reason
+        _save_job(request.job_id)
 
         record_optimization_event(
             job_id=request.job_id,
@@ -292,14 +389,13 @@ async def optimize_mesh(request: OptimizeRequest):
         jobs[request.job_id]["status"] = "failed"
         jobs[request.job_id]["stage"] = "Error"
         jobs[request.job_id]["error"] = str(e)
+        _save_job(request.job_id)
         raise HTTPException(422, f"Optimization failed: {str(e)}")
 
 
 @router.post("/feedback", response_model=FeedbackResponse)
 async def submit_feedback(request: FeedbackRequest):
-    job = jobs.get(request.job_id)
-    if not job:
-        raise HTTPException(404, "Job not found")
+    job = _get_job(request.job_id)
     if job.get("status") != "completed":
         raise HTTPException(400, "Feedback can be submitted after optimization completes")
 
@@ -337,9 +433,7 @@ async def training_bootstrap():
 
 @router.get("/recommend/{job_id}", response_model=OptimizationRecommendationResponse)
 async def recommend_optimization(job_id: str, from_latest: bool = False):
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(404, "Job not found")
+    job = _get_job(job_id)
 
     use_latest = bool(from_latest and job.get("optimized_stats") is not None)
     stats = job.get("optimized_stats") if use_latest else job.get("original_stats")
@@ -387,9 +481,7 @@ async def recommend_optimization(job_id: str, from_latest: bool = False):
 
 @router.get("/status/{job_id}", response_model=JobStatus)
 async def get_job_status(job_id: str):
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(404, "Job not found")
+    job = _get_job(job_id)
 
     return JobStatus(
         job_id=job_id,
@@ -402,9 +494,7 @@ async def get_job_status(job_id: str):
 
 @router.get("/download/{job_id}")
 async def download_result(job_id: str):
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(404, "Job not found")
+    job = _get_job(job_id)
     if job["status"] != "completed":
         raise HTTPException(400, "Job not yet completed")
 
@@ -437,9 +527,7 @@ async def download_result(job_id: str):
 
 @router.get("/preview/{job_id}")
 async def preview_result(job_id: str):
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(404, "Job not found")
+    job = _get_job(job_id)
     if job["status"] != "completed":
         raise HTTPException(400, "Job not yet completed")
 
@@ -460,8 +548,7 @@ async def preview_result(job_id: str):
 
 @router.delete("/job/{job_id}")
 async def delete_job(job_id: str):
-    if job_id not in jobs:
-        raise HTTPException(404, "Job not found")
+    _get_job(job_id)
     cleanup_job(job_id)
-    del jobs[job_id]
+    jobs.pop(job_id, None)
     return {"message": "Job deleted"}
