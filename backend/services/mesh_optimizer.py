@@ -40,16 +40,24 @@ def _save_current_mesh(ms: pymeshlab.MeshSet, output_path: str | Path) -> None:
     output_path = str(output_path)
     try:
         ms.save_current_mesh(output_path)
-    except RuntimeError as exc:
-        message = str(exc)
-        # Some textured meshes fail export when PyMeshLab cannot write embedded images.
-        if "Image " not in message or "cannot be saved" not in message:
-            raise
-        ms.save_current_mesh(
-            output_path,
-            save_textures=False,
-            save_wedge_texcoord=False,
-        )
+    except RuntimeError:
+        # Fallback for textured/complex assets where export fails on embedded resources.
+        try:
+            ms.save_current_mesh(
+                output_path,
+                save_textures=False,
+                save_wedge_texcoord=False,
+            )
+        except RuntimeError:
+            # Last fallback: keep geometry export strict and avoid optional channels.
+            ms.save_current_mesh(
+                output_path,
+                save_textures=False,
+                save_wedge_texcoord=False,
+                save_vertex_normal=False,
+                save_vertex_color=False,
+                save_face_color=False,
+            )
 
 
 def _build_target_candidates(

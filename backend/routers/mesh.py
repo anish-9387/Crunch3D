@@ -292,7 +292,7 @@ async def optimize_mesh(request: OptimizeRequest):
         jobs[request.job_id]["status"] = "failed"
         jobs[request.job_id]["stage"] = "Error"
         jobs[request.job_id]["error"] = str(e)
-        raise HTTPException(500, f"Optimization failed: {str(e)}")
+        raise HTTPException(422, f"Optimization failed: {str(e)}")
 
 
 @router.post("/feedback", response_model=FeedbackResponse)
