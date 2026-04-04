@@ -38,26 +38,41 @@ def _apply_decimation(
 
 def _save_current_mesh(ms: pymeshlab.MeshSet, output_path: str | Path) -> None:
     output_path = str(output_path)
-    try:
-        ms.save_current_mesh(output_path)
-    except RuntimeError:
-        # Fallback for textured/complex assets where export fails on embedded resources.
+    save_attempts = [
+        {},
+        {"save_textures": False},
+        {"save_textures": False, "save_wedge_texcoord": False},
+        {
+            "save_textures": False,
+            "save_wedge_texcoord": False,
+            "save_vertex_normal": False,
+            "save_vertex_color": False,
+            "save_face_color": False,
+        },
+    ]
+
+    last_error: Exception | None = None
+    for kwargs in save_attempts:
         try:
-            ms.save_current_mesh(
-                output_path,
-                save_textures=False,
-                save_wedge_texcoord=False,
-            )
-        except RuntimeError:
-            # Last fallback: keep geometry export strict and avoid optional channels.
-            ms.save_current_mesh(
-                output_path,
-                save_textures=False,
-                save_wedge_texcoord=False,
-                save_vertex_normal=False,
-                save_vertex_color=False,
-                save_face_color=False,
-            )
+            ms.save_current_mesh(output_path, **kwargs)
+            return
+        except Exception as exc:
+            last_error = exc
+
+    # Final fallback: export pure geometry through trimesh to bypass texture/plugin issues.
+    try:
+        mesh = ms.current_mesh()
+        vertices = np.asarray(mesh.vertex_matrix(), dtype=np.float64)
+        faces = np.asarray(mesh.face_matrix(), dtype=np.int64)
+
+        if vertices.size > 0 and faces.size > 0:
+            tri_mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+            tri_mesh.export(output_path)
+            return
+    except Exception as exc:
+        last_error = exc
+
+    raise RuntimeError(f"Could not save mesh output: {last_error}")
 
 
 def _build_target_candidates(
