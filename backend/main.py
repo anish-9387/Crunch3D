@@ -29,6 +29,10 @@ async def root():
         "endpoints": {
             "upload": "POST /api/upload",
             "optimize": "POST /api/optimize",
+            "feedback": "POST /api/feedback",
+            "training_summary": "GET /api/training/summary",
+            "training_bootstrap": "POST /api/training/bootstrap",
+            "recommend": "GET /api/recommend/{job_id}",
             "status": "GET /api/status/{job_id}",
             "preview": "GET /api/preview/{job_id}",
             "download": "GET /api/download/{job_id}",

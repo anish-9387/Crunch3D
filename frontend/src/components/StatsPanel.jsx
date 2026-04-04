@@ -1,4 +1,20 @@
-export default function StatsPanel({ original, optimized, lods, processingTime, qualityMeta, downloadUrl }) {
+export default function StatsPanel({
+  original,
+  optimized,
+  lods,
+  processingTime,
+  qualityMeta,
+  downloadUrl,
+  feedbackState,
+  trainingSummary,
+  onFeedbackStateChange,
+  onSubmitFeedback,
+  submittingFeedback,
+  feedbackResult,
+  bootstrappingModel,
+  bootstrapResult,
+  onBootstrapModel,
+}) {
   if (!original) return null
 
   const reductionPercent =
@@ -121,6 +137,148 @@ export default function StatsPanel({ original, optimized, lods, processingTime, 
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {optimized && (
+        <div className="card">
+          <h3>User Feedback Loop</h3>
+          <div style={{ display: 'grid', gap: 10, fontSize: 13 }}>
+            <div style={{ color: 'var(--text-secondary)' }}>
+              Did this output match your expected result?
+            </div>
+
+            <div className="feedback-btn-row">
+              <button
+                className={`feedback-btn ${feedbackState.satisfied === true ? 'active' : ''}`}
+                onClick={() => onFeedbackStateChange({ ...feedbackState, satisfied: true })}
+                type="button"
+              >
+                Desired Output Achieved
+              </button>
+              <button
+                className={`feedback-btn ${feedbackState.satisfied === false ? 'active' : ''}`}
+                onClick={() => onFeedbackStateChange({ ...feedbackState, satisfied: false })}
+                type="button"
+              >
+                Needs Improvement
+              </button>
+            </div>
+
+            <div className="feedback-grid-3">
+              <label className="feedback-check">
+                <input
+                  type="checkbox"
+                  checked={feedbackState.preserveShape}
+                  onChange={(e) => onFeedbackStateChange({ ...feedbackState, preserveShape: e.target.checked })}
+                />
+                Shape Preserved
+              </label>
+              <label className="feedback-check">
+                <input
+                  type="checkbox"
+                  checked={feedbackState.preserveVertices}
+                  onChange={(e) => onFeedbackStateChange({ ...feedbackState, preserveVertices: e.target.checked })}
+                />
+                Vertices Preserved
+              </label>
+              <label className="feedback-check">
+                <input
+                  type="checkbox"
+                  checked={feedbackState.preserveFaces}
+                  onChange={(e) => onFeedbackStateChange({ ...feedbackState, preserveFaces: e.target.checked })}
+                />
+                Faces Preserved
+              </label>
+            </div>
+
+            <div className="feedback-grid-2">
+              <label>
+                Rating (1-5)
+                <input
+                  className="config-input"
+                  type="number"
+                  min={1}
+                  max={5}
+                  value={feedbackState.rating}
+                  onChange={(e) => onFeedbackStateChange({ ...feedbackState, rating: e.target.value })}
+                />
+              </label>
+              <label>
+                Issues (comma separated)
+                <input
+                  className="config-input"
+                  type="text"
+                  value={feedbackState.issuesText}
+                  onChange={(e) => onFeedbackStateChange({ ...feedbackState, issuesText: e.target.value })}
+                  placeholder="shape drift, UV stretch, shading"
+                />
+              </label>
+            </div>
+
+            <label>
+              Feedback Notes
+              <textarea
+                className="config-textarea"
+                rows={3}
+                value={feedbackState.notes}
+                onChange={(e) => onFeedbackStateChange({ ...feedbackState, notes: e.target.value })}
+                placeholder="What should the optimizer improve next?"
+              />
+            </label>
+
+            <button
+              className="optimize-btn"
+              type="button"
+              onClick={onSubmitFeedback}
+              disabled={submittingFeedback || feedbackState.satisfied === null}
+            >
+              {submittingFeedback ? 'Saving Feedback...' : 'Save Feedback For Training'}
+            </button>
+
+            {feedbackResult?.recommendations?.length > 0 && (
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>Suggested AI Improvements</div>
+                {feedbackResult.recommendations.map((item) => (
+                  <div key={item} className="graph-item">
+                    {item}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {trainingSummary && (
+        <div className="card">
+          <h3>Training Readiness</h3>
+          <div className="kv-grid" style={{ rowGap: 8 }}>
+            <div className="kv-key">Optimization Events</div>
+            <div className="kv-val">{trainingSummary.total_optimization_events}</div>
+            <div className="kv-key">Feedback Events</div>
+            <div className="kv-val">{trainingSummary.total_feedback_events}</div>
+            <div className="kv-key">Positive / Negative</div>
+            <div className="kv-val">
+              {trainingSummary.positive_feedback} / {trainingSummary.negative_feedback}
+            </div>
+          </div>
+
+          <button
+            className="optimize-btn"
+            type="button"
+            onClick={onBootstrapModel}
+            disabled={bootstrappingModel}
+            style={{ marginTop: 12 }}
+          >
+            {bootstrappingModel ? 'Building Model...' : 'Start / Refresh Preference Model'}
+          </button>
+
+          {bootstrapResult && (
+            <div className="graph-item" style={{ marginTop: 8 }}>
+              Model updated with {bootstrapResult.training_samples_used} positive samples.
+            </div>
+          )}
         </div>
       )}
 

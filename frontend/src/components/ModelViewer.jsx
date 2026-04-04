@@ -204,12 +204,12 @@ function MeshFromUrl({ url, filename, wireframe, onModelReady, onModelError }) {
   )
 }
 
-function Scene({ url, filename, wireframe, onModelReady, onModelError, onCameraChange }) {
+function Scene({ url, filename, wireframe, onModelReady, onModelError, onCameraChange, performanceMode }) {
   return (
     <>
       <ambientLight intensity={0.7} />
       <directionalLight position={[4, 5, 4]} intensity={0.85} color="#ffffff" />
-      <directionalLight position={[-2, -2, 1]} intensity={0.4} color="#e6e6e6" />
+      {!performanceMode && <directionalLight position={[-2, -2, 1]} intensity={0.4} color="#e6e6e6" />}
       <Suspense fallback={null}>
         {url && (
           <MeshFromUrl
@@ -223,18 +223,20 @@ function Scene({ url, filename, wireframe, onModelReady, onModelError, onCameraC
       </Suspense>
       <CameraReporter onCameraChange={onCameraChange} />
       <OrbitControls makeDefault enableDamping dampingFactor={0.1} />
-      <Grid
-        args={[10, 10]}
-        cellSize={0.5}
-        cellThickness={0.5}
-        cellColor="#4a4a4a"
-        sectionSize={2}
-        sectionThickness={1}
-        sectionColor="#7a7a7a"
-        fadeDistance={15}
-        infiniteGrid
-        position={[0, -1, 0]}
-      />
+      {!performanceMode && (
+        <Grid
+          args={[10, 10]}
+          cellSize={0.5}
+          cellThickness={0.5}
+          cellColor="#4a4a4a"
+          sectionSize={2}
+          sectionThickness={1}
+          sectionColor="#7a7a7a"
+          fadeDistance={15}
+          infiniteGrid
+          position={[0, -1, 0]}
+        />
+      )}
     </>
   )
 }
@@ -249,6 +251,7 @@ export default function ModelViewer({
   darkMode,
   processing,
   stage,
+  performanceMode,
 }) {
   const [wireframe, setWireframe] = useState(false)
   const [splitView, setSplitView] = useState(false)
@@ -258,8 +261,8 @@ export default function ModelViewer({
   const cameraCacheRef = useRef({})
 
   const showSplit = splitView && optimizedUrl
-  const activeFilename = optimizedUrl && !splitView ? optimizedFilename : filename
-  const activeStats = optimizedUrl && !splitView ? optimizedStats : originalStats
+  const activeFilename = optimizedUrl ? optimizedFilename : filename
+  const activeStats = optimizedUrl ? optimizedStats : originalStats
 
   const inspectorMode = showSplit ? 'Comparison' : optimizedUrl ? 'Optimized' : 'Original'
 
@@ -330,7 +333,11 @@ export default function ModelViewer({
         <div className="viewer-split">
           <div className="viewer-container">
             <div className="viewer-label">Original</div>
-            <Canvas camera={{ position: [3, 2, 3], fov: 50 }}>
+            <Canvas
+              camera={{ position: [3, 2, 3], fov: 50 }}
+              dpr={performanceMode ? [0.8, 1.25] : [1, 2]}
+              gl={{ antialias: !performanceMode, powerPreference: 'high-performance' }}
+            >
               <Scene
                 url={originalUrl}
                 filename={filename}
@@ -338,12 +345,17 @@ export default function ModelViewer({
                 onModelReady={handleModelReady}
                 onModelError={handleModelError}
                 onCameraChange={handleCameraChange}
+                performanceMode={performanceMode}
               />
             </Canvas>
           </div>
           <div className="viewer-container">
             <div className="viewer-label">Optimized</div>
-            <Canvas camera={{ position: [3, 2, 3], fov: 50 }}>
+            <Canvas
+              camera={{ position: [3, 2, 3], fov: 50 }}
+              dpr={performanceMode ? [0.8, 1.25] : [1, 2]}
+              gl={{ antialias: !performanceMode, powerPreference: 'high-performance' }}
+            >
               <Scene
                 url={optimizedUrl}
                 filename={optimizedFilename}
@@ -351,6 +363,7 @@ export default function ModelViewer({
                 onModelReady={handleModelReady}
                 onModelError={handleModelError}
                 onCameraChange={handleCameraChange}
+                performanceMode={performanceMode}
               />
             </Canvas>
           </div>
@@ -366,7 +379,11 @@ export default function ModelViewer({
           <div className="viewer-label">
             {optimizedUrl && !splitView ? 'Optimized' : 'Original'}
           </div>
-          <Canvas camera={{ position: [3, 2, 3], fov: 50 }}>
+          <Canvas
+            camera={{ position: [3, 2, 3], fov: 50 }}
+            dpr={performanceMode ? [0.8, 1.25] : [1, 2]}
+            gl={{ antialias: !performanceMode, powerPreference: 'high-performance' }}
+          >
             <Scene
               url={optimizedUrl || originalUrl}
               filename={optimizedUrl ? optimizedFilename : filename}
@@ -374,6 +391,7 @@ export default function ModelViewer({
               onModelReady={handleModelReady}
               onModelError={handleModelError}
               onCameraChange={handleCameraChange}
+              performanceMode={performanceMode}
             />
           </Canvas>
         </div>

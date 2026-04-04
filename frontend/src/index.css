@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700&family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700&family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
 
 * {
   margin: 0;
@@ -7,7 +7,7 @@
 }
 
 :root,
-:root[data-theme='dark'] {
+:root[data-theme="dark"] {
   --bg-primary: #0b0b0c;
   --bg-secondary: #111112;
   --bg-card: #18181a;
@@ -25,12 +25,20 @@
   --canvas-bg: #2f2f33;
   --shadow: 0 20px 38px rgba(0, 0, 0, 0.35);
   --app-gradient:
-    radial-gradient(circle at 8% 10%, rgba(255, 255, 255, 0.09), transparent 42%),
-    radial-gradient(circle at 92% 90%, rgba(255, 255, 255, 0.07), transparent 46%),
+    radial-gradient(
+      circle at 8% 10%,
+      rgba(255, 255, 255, 0.09),
+      transparent 42%
+    ),
+    radial-gradient(
+      circle at 92% 90%,
+      rgba(255, 255, 255, 0.07),
+      transparent 46%
+    ),
     linear-gradient(160deg, #0b0b0c 0%, #131315 100%);
 }
 
-:root[data-theme='light'] {
+:root[data-theme="light"] {
   --bg-primary: #f1f1f1;
   --bg-secondary: #fcfcfc;
   --bg-card: #f7f7f8;
@@ -48,8 +56,16 @@
   --canvas-bg: #dedee4;
   --shadow: 0 16px 28px rgba(20, 20, 20, 0.12);
   --app-gradient:
-    radial-gradient(circle at 12% 8%, rgba(255, 255, 255, 0.92), transparent 38%),
-    radial-gradient(circle at 88% 88%, rgba(223, 223, 227, 0.8), transparent 46%),
+    radial-gradient(
+      circle at 12% 8%,
+      rgba(255, 255, 255, 0.92),
+      transparent 38%
+    ),
+    radial-gradient(
+      circle at 88% 88%,
+      rgba(223, 223, 227, 0.8),
+      transparent 46%
+    ),
     linear-gradient(160deg, #f5f5f7 0%, #ececf0 100%);
 }
 
@@ -63,14 +79,14 @@ body,
 
 body {
   position: relative;
-  font-family: 'Rajdhani', 'Segoe UI', sans-serif;
+  font-family: "Rajdhani", "Segoe UI", sans-serif;
   background: var(--app-gradient);
   color: var(--text-primary);
   min-height: 100vh;
 }
 
 body::before {
-  content: '';
+  content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
@@ -110,7 +126,7 @@ body::before {
 }
 
 .header h1 {
-  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
   font-size: clamp(1.8rem, 2.7vw, 2.5rem);
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -195,7 +211,9 @@ body::before {
   border-radius: 12px;
   padding: 18px;
   box-shadow: var(--shadow);
-  transition: transform 0.24s ease, border-color 0.24s ease;
+  transition:
+    transform 0.24s ease,
+    border-color 0.24s ease;
 }
 
 .card:hover {
@@ -204,7 +222,7 @@ body::before {
 }
 
 .card h3 {
-  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
   font-size: 0.83rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
@@ -269,7 +287,25 @@ body::before {
   font-weight: 600;
 }
 
-input[type='range'] {
+.config-select,
+.config-input,
+.config-textarea {
+  width: 100%;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.8rem;
+}
+
+.config-textarea {
+  resize: vertical;
+}
+
+input[type="range"] {
   width: 100%;
   accent-color: var(--accent-soft);
 }
@@ -308,7 +344,7 @@ input[type='range'] {
 }
 
 .toggle-slider::before {
-  content: '';
+  content: "";
   position: absolute;
   width: 16px;
   height: 16px;
@@ -330,7 +366,7 @@ input[type='range'] {
 }
 
 .optimize-btn {
-  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
   width: 100%;
   padding: 13px;
   border: 1px solid var(--accent-soft);
@@ -383,7 +419,7 @@ input[type='range'] {
 }
 
 .viewer-btn {
-  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
   padding: 7px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -404,7 +440,7 @@ input[type='range'] {
 }
 
 .viewer-label {
-  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
   position: absolute;
   top: 11px;
   left: 11px;
@@ -457,7 +493,11 @@ input[type='range'] {
 }
 
 .inspector {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-primary) 92%, transparent), var(--bg-secondary));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-primary) 92%, transparent),
+    var(--bg-secondary)
+  );
   border: 1px solid var(--border);
   border-radius: 10px;
   display: flex;
@@ -507,7 +547,7 @@ input[type='range'] {
 }
 
 .inspector-section h4 {
-  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.11em;
@@ -537,7 +577,7 @@ input[type='range'] {
 }
 
 .kv-grid.mono .kv-val {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: "JetBrains Mono", monospace;
   font-size: 0.7rem;
 }
 
@@ -619,6 +659,47 @@ input[type='range'] {
   font-size: 0.82rem;
 }
 
+.feedback-btn-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.feedback-btn {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 9px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.feedback-btn.active {
+  border-color: var(--accent-soft);
+  background: var(--bg-elevated);
+}
+
+.feedback-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.feedback-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.feedback-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
 .download-btn {
   padding: 9px 16px;
   border: 1px solid var(--accent-soft);
@@ -677,6 +758,12 @@ input[type='range'] {
   .download-bar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .feedback-btn-row,
+  .feedback-grid-2,
+  .feedback-grid-3 {
+    grid-template-columns: 1fr;
   }
 
   .download-btn {

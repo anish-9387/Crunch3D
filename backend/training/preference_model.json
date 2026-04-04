@@ -1,0 +1,33 @@
+{
+  "generated_at_utc": "2026-04-03T11:36:12.381543+00:00",
+  "training_samples_used": 7,
+  "profiles": [
+    {
+      "use_case": "general",
+      "quality_priority": "balanced",
+      "sample_count": 3,
+      "recommended_target_faces": 175500,
+      "preserve_shape": true,
+      "preserve_vertices": true,
+      "preserve_faces": true
+    },
+    {
+      "use_case": "web_realtime",
+      "quality_priority": "balanced",
+      "sample_count": 2,
+      "recommended_target_faces": 149500,
+      "preserve_shape": true,
+      "preserve_vertices": true,
+      "preserve_faces": true
+    },
+    {
+      "use_case": "web_realtime",
+      "quality_priority": "quality",
+      "sample_count": 2,
+      "recommended_target_faces": 153400,
+      "preserve_shape": true,
+      "preserve_vertices": true,
+      "preserve_faces": true
+    }
+  ]
+}

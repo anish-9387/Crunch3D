@@ -1,4 +1,5 @@
 import os
+import tempfile
 from pathlib import Path
 import numpy as np
 import pymeshlab
@@ -35,21 +36,59 @@ def _apply_decimation(
     )
 
 
-def _build_target_candidates(current_faces: int, target_faces: int) -> list[int]:
+def _save_current_mesh(ms: pymeshlab.MeshSet, output_path: str | Path) -> None:
+    output_path = str(output_path)
+    try:
+        ms.save_current_mesh(output_path)
+    except RuntimeError as exc:
+        message = str(exc)
+        # Some textured meshes fail export when PyMeshLab cannot write embedded images.
+        if "Image " not in message or "cannot be saved" not in message:
+            raise
+        ms.save_current_mesh(
+            output_path,
+            save_textures=False,
+            save_wedge_texcoord=False,
+        )
+
+
+def _build_target_candidates(
+    current_faces: int,
+    target_faces: int,
+    max_target_overshoot_percent: float,
+) -> list[int]:
     target = int(max(4, min(target_faces, current_faces - 1)))
-    gap = max(current_faces - target, 0)
+    overshoot_factor = max(0.0, float(max_target_overshoot_percent)) / 100.0
+    cap = int(round(target * (1.0 + overshoot_factor)))
+    cap = int(max(target, min(cap, current_faces - 1)))
+
     candidates: list[int] = []
 
-    for ratio in [0.0, 0.2, 0.4, 0.6, 0.8, 0.92]:
-        candidate = target + int(gap * ratio)
-        candidate = int(max(4, min(candidate, current_faces - 1)))
+    for ratio in [0.0, 0.03, 0.06, 0.09, 0.12]:
+        candidate = target + int((cap - target) * ratio / 0.12) if cap > target else target
+        candidate = int(max(4, min(candidate, cap)))
         if candidate not in candidates:
             candidates.append(candidate)
 
-    if (current_faces - 1) not in candidates:
-        candidates.append(current_faces - 1)
+    if cap not in candidates:
+        candidates.append(cap)
 
     return candidates
+
+
+def _apply_structure_preclean(ms: pymeshlab.MeshSet) -> None:
+    # Best-effort topology cleanup before decimation to avoid local vertex collapse artifacts.
+    for filter_name, kwargs in [
+        ("meshing_remove_duplicate_vertices", {}),
+        ("meshing_remove_duplicate_faces", {}),
+        ("meshing_remove_unreferenced_vertices", {}),
+        ("meshing_repair_non_manifold_vertices", {}),
+        ("meshing_repair_non_manifold_edges", {"method": 0}),
+    ]:
+        try:
+            ms.apply_filter(filter_name, **kwargs)
+        except Exception:
+            continue
 
 
 def _load_trimesh(path: str | Path) -> trimesh.Trimesh:
@@ -134,6 +173,40 @@ def _surface_deviation_percent(quality_ref: dict, optimized_path: str | Path) ->
     return round(float(deviation_percent), 4)
 
 
+def _is_quality_metric_reliable(
+    input_path: str | Path,
+    quality_ref: dict | None,
+    max_deviation_percent: float,
+) -> bool:
+    if quality_ref is None:
+        return False
+
+    baseline_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".obj", delete=False) as tmp:
+            baseline_path = tmp.name
+
+        ms = pymeshlab.MeshSet()
+        ms.load_new_mesh(str(input_path))
+        _save_current_mesh(ms, baseline_path)
+
+        baseline_deviation = _surface_deviation_percent(quality_ref, baseline_path)
+        if baseline_deviation is None:
+            return False
+
+        # Allow a small conversion tolerance, but treat very high baseline error as unreliable.
+        reliability_limit = max(max_deviation_percent * 1.5, 0.5)
+        return baseline_deviation <= reliability_limit
+    except Exception:
+        return False
+    finally:
+        if baseline_path and os.path.exists(baseline_path):
+            try:
+                os.remove(baseline_path)
+            except Exception:
+                pass
+
+
 def decimate_mesh(
     input_path: str | Path,
     output_path: str | Path,
@@ -142,6 +215,7 @@ def decimate_mesh(
     preserve_boundaries: bool = True,
     strict_quality: bool = True,
     max_deviation_percent: float = 2.0,
+    max_target_overshoot_percent: float = 12.0,
 ) -> tuple[MeshStats, dict]:
     input_path = str(input_path)
     output_path = str(output_path)
@@ -151,7 +225,7 @@ def decimate_mesh(
 
     current_faces = inspection_mesh.current_mesh().face_number()
     if current_faces <= 4:
-        inspection_mesh.save_current_mesh(output_path)
+        _save_current_mesh(inspection_mesh, output_path)
         return _get_stats(output_path, inspection_mesh), {
             "target_faces_used": current_faces,
             "quality_deviation_percent": 0.0,
@@ -162,7 +236,7 @@ def decimate_mesh(
     requested_target = int(max(4, min(target_faces, current_faces - 1)))
 
     if requested_target >= current_faces:
-        inspection_mesh.save_current_mesh(output_path)
+        _save_current_mesh(inspection_mesh, output_path)
         return _get_stats(output_path, inspection_mesh), {
             "target_faces_used": current_faces,
             "quality_deviation_percent": 0.0,
@@ -171,7 +245,20 @@ def decimate_mesh(
         }
 
     quality_ref = _build_quality_reference(input_path) if strict_quality else None
-    candidate_targets = _build_target_candidates(current_faces, requested_target) if strict_quality else [requested_target]
+    if strict_quality and quality_ref is not None:
+        if not _is_quality_metric_reliable(input_path, quality_ref, max_deviation_percent):
+            # Some scene formats can report inflated deviations after conversion.
+            # In those cases, use decimation without the geometric lock metric.
+            quality_ref = None
+    candidate_targets = (
+        _build_target_candidates(
+            current_faces=current_faces,
+            target_faces=requested_target,
+            max_target_overshoot_percent=max_target_overshoot_percent,
+        )
+        if strict_quality
+        else [requested_target]
+    )
 
     last_stats: MeshStats | None = None
     last_deviation: float | None = None
@@ -180,13 +267,14 @@ def decimate_mesh(
     for candidate_target in candidate_targets:
         ms = pymeshlab.MeshSet()
         ms.load_new_mesh(input_path)
+        # _apply_structure_preclean(ms)  # Rollback the preclean step
         _apply_decimation(
             ms=ms,
             target_faces=candidate_target,
             preserve_normals=preserve_normals,
             preserve_boundaries=preserve_boundaries,
         )
-        ms.save_current_mesh(output_path)
+        _save_current_mesh(ms, output_path)
 
         stats = _get_stats(output_path, ms)
         deviation_percent = _surface_deviation_percent(quality_ref, output_path) if quality_ref else None
@@ -262,7 +350,7 @@ def generate_lods(
                 preserve_boundaries=preserve_boundaries,
             )
 
-        ms.save_current_mesh(str(output_file))
+        _save_current_mesh(ms, output_file)
         mesh = ms.current_mesh()
         file_size = os.path.getsize(output_file)
 

@@ -7,6 +7,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from ..models.schemas import (
     UploadResponse, OptimizeRequest, OptimizeResponse, JobStatus,
+    FeedbackRequest, FeedbackResponse, TrainingSummaryResponse, TrainingBootstrapResponse,
+    OptimizationRecommendationResponse,
 )
 from ..services.file_handler import (
     generate_job_id, get_upload_path, get_processed_path,
@@ -14,6 +16,13 @@ from ..services.file_handler import (
 )
 from ..services.mesh_analyzer import analyze_mesh
 from ..services.mesh_optimizer import decimate_mesh, generate_lods, resolve_output_extension
+from ..services.feedback_trainer import (
+    record_optimization_event,
+    record_feedback_event,
+    get_training_summary,
+    bootstrap_preference_model,
+    find_preference_profile,
+)
 
 router = APIRouter(prefix="/api", tags=["mesh"])
 
@@ -21,6 +30,68 @@ router = APIRouter(prefix="/api", tags=["mesh"])
 jobs: dict[str, dict] = {}
 
 MAX_FILE_SIZE_MB = 50
+
+PRESET_TARGETS = {
+    "tiny_ui": 8000,
+    "decorative_bg": 25000,
+    "hero_standard": 70000,
+    "interactive_model": 100000,
+    "multi_scene": 220000,
+    "mobile_hero": 45000,
+}
+
+
+def _risk_level(face_count: int) -> str:
+    if face_count < 50000:
+        return "safe"
+    if face_count <= 150000:
+        return "moderate"
+    if face_count <= 500000:
+        return "heavy"
+    return "avoid"
+
+
+def _recommend_for_stats(face_count: int, file_size_mb: float) -> tuple[str, int, bool, str, list[str]]:
+    reasons: list[str] = []
+
+    if face_count > 500000:
+        preset = "mobile_hero"
+        reasons.append("Very high geometry budget detected, prioritize aggressive landing-page reduction.")
+    elif face_count > 300000:
+        preset = "hero_standard"
+        reasons.append("High geometry model detected, strong optimization recommended for smooth web FPS.")
+    elif face_count > 150000:
+        preset = "decorative_bg"
+        reasons.append("Moderately heavy model detected, reduce to background-safe budget.")
+    elif face_count > 90000:
+        preset = "hero_standard"
+        reasons.append("Model is above standard hero budget, target balanced hero preset.")
+    elif face_count > 50000:
+        preset = "interactive_model"
+        reasons.append("Model fits interactive range, preserve enough detail for user interactions.")
+    elif face_count > 25000:
+        preset = "mobile_hero"
+        reasons.append("Model is already moderate, tune for better mobile and cross-device FPS.")
+    elif face_count > 10000:
+        preset = "decorative_bg"
+        reasons.append("Model fits decorative range, maintain lightweight rendering.")
+    else:
+        preset = "tiny_ui"
+        reasons.append("Model is already lightweight and suitable for tiny UI elements.")
+
+    if file_size_mb > 25:
+        reasons.append("Large file size detected, enabling stronger FPS-focused recommendation.")
+
+    target_faces = PRESET_TARGETS[preset]
+    enable_performance_mode = face_count > 50000 or file_size_mb > 15
+    risk_level = _risk_level(face_count)
+
+    return preset, target_faces, enable_performance_mode, risk_level, reasons
+
+
+def _preset_for_target(target_faces: int) -> str:
+    closest = min(PRESET_TARGETS.items(), key=lambda item: abs(item[1] - target_faces))
+    return closest[0]
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -70,27 +141,45 @@ async def optimize_mesh(request: OptimizeRequest):
         raise HTTPException(404, "Job not found")
 
     # Platform presets
-    presets = {
-        "web": 15000,
-        "mobile": 8000,
-        "pc": 40000,
-        "vr": 5000,
-    }
+    presets = PRESET_TARGETS
 
     target_faces = request.target_faces
     if request.preset and request.preset in presets:
         target_faces = presets[request.preset]
 
-    original_stats = job["original_stats"]
-    if target_faces >= original_stats.face_count:
-        target_faces = int(original_stats.face_count * 0.5)
+    latest_stats = job.get("optimized_stats")
+    base_original_stats = job.get("original_stats")
+
+    using_latest_output = (
+        request.reoptimize_from_latest
+        and job.get("status") == "completed"
+        and latest_stats is not None
+        and job.get("output_path") is not None
+    )
+
+    source_reason = "latest_output"
+    if using_latest_output and latest_stats is not None and base_original_stats is not None:
+        latest_faces = latest_stats.face_count
+        original_faces = base_original_stats.face_count
+
+        # If user increases target above current optimized mesh, switch back to original source.
+        # This allows recovering detail budget between current output and original model.
+        if target_faces > latest_faces and target_faces < original_faces:
+            using_latest_output = False
+            source_reason = "fallback_to_original_for_face_increase"
+        elif target_faces >= original_faces:
+            using_latest_output = False
+            source_reason = "fallback_to_original_for_high_target"
+
+    source_stats = job.get("optimized_stats") if using_latest_output else job["original_stats"]
+    original_stats = source_stats
 
     jobs[request.job_id]["status"] = "processing"
     jobs[request.job_id]["progress"] = 10
     jobs[request.job_id]["stage"] = "Starting decimation"
 
     start_time = time.time()
-    input_path = job["filepath"]
+    input_path = job["output_path"] if using_latest_output else job["filepath"]
     output_dir = get_processed_path(request.job_id)
     base_name = Path(input_path).stem
     input_ext = Path(input_path).suffix.lower()
@@ -110,6 +199,7 @@ async def optimize_mesh(request: OptimizeRequest):
             preserve_boundaries=request.preserve_boundaries,
             strict_quality=request.strict_quality,
             max_deviation_percent=request.max_deviation_percent,
+            max_target_overshoot_percent=request.max_target_overshoot_percent,
         )
 
         lod_results = None
@@ -144,6 +234,20 @@ async def optimize_mesh(request: OptimizeRequest):
         jobs[request.job_id]["quality_deviation_percent"] = quality_meta.get("quality_deviation_percent")
         jobs[request.job_id]["quality_guard_relaxed"] = quality_meta.get("quality_guard_relaxed", False)
         jobs[request.job_id]["quality_guard_satisfied"] = quality_meta.get("quality_guard_satisfied", True)
+        jobs[request.job_id]["optimize_request"] = request.model_dump()
+        jobs[request.job_id]["reduction_percent"] = reduction
+        jobs[request.job_id]["processing_time_seconds"] = processing_time
+        jobs[request.job_id]["source_reason"] = source_reason
+
+        record_optimization_event(
+            job_id=request.job_id,
+            original_stats=original_stats.model_dump(),
+            optimized_stats=optimized_stats.model_dump(),
+            request_payload=request.model_dump(),
+            quality_meta=quality_meta,
+            processing_time_seconds=processing_time,
+            reduction_percent=reduction,
+        )
 
         message = (
             f"Mesh optimized: {original_stats.face_count:,} -> {optimized_stats.face_count:,} faces ({reduction}% reduction)"
@@ -161,6 +265,11 @@ async def optimize_mesh(request: OptimizeRequest):
 
         if format_was_converted:
             message += f". Output converted from {input_ext or 'unknown'} to {output_ext} for compatibility"
+
+        if source_reason == "fallback_to_original_for_face_increase":
+            message += " | face target increased above latest output, so optimization restarted from original mesh"
+        elif source_reason == "fallback_to_original_for_high_target":
+            message += " | face target is near original budget, so optimization used original mesh"
 
         return OptimizeResponse(
             job_id=request.job_id,
@@ -184,6 +293,96 @@ async def optimize_mesh(request: OptimizeRequest):
         jobs[request.job_id]["stage"] = "Error"
         jobs[request.job_id]["error"] = str(e)
         raise HTTPException(500, f"Optimization failed: {str(e)}")
+
+
+@router.post("/feedback", response_model=FeedbackResponse)
+async def submit_feedback(request: FeedbackRequest):
+    job = jobs.get(request.job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("status") != "completed":
+        raise HTTPException(400, "Feedback can be submitted after optimization completes")
+
+    optimization_snapshot = {
+        "optimize_request": job.get("optimize_request"),
+        "original_stats": job.get("original_stats").model_dump() if job.get("original_stats") else None,
+        "optimized_stats": job.get("optimized_stats").model_dump() if job.get("optimized_stats") else None,
+        "reduction_percent": job.get("reduction_percent"),
+        "processing_time_seconds": job.get("processing_time_seconds"),
+        "quality_guard_relaxed": job.get("quality_guard_relaxed"),
+        "quality_guard_satisfied": job.get("quality_guard_satisfied"),
+    }
+
+    recommendations = record_feedback_event(
+        feedback=request,
+        optimization_snapshot=optimization_snapshot,
+    )
+
+    return FeedbackResponse(
+        job_id=request.job_id,
+        saved=True,
+        recommendations=recommendations,
+    )
+
+
+@router.get("/training/summary", response_model=TrainingSummaryResponse)
+async def training_summary():
+    return TrainingSummaryResponse(**get_training_summary())
+
+
+@router.post("/training/bootstrap", response_model=TrainingBootstrapResponse)
+async def training_bootstrap():
+    return TrainingBootstrapResponse(**bootstrap_preference_model())
+
+
+@router.get("/recommend/{job_id}", response_model=OptimizationRecommendationResponse)
+async def recommend_optimization(job_id: str, from_latest: bool = False):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    use_latest = bool(from_latest and job.get("optimized_stats") is not None)
+    stats = job.get("optimized_stats") if use_latest else job.get("original_stats")
+    if stats is None:
+        raise HTTPException(400, "No mesh stats available for recommendation")
+
+    optimize_request = job.get("optimize_request") or {}
+    desired_output = optimize_request.get("desired_output") or {}
+    use_case = desired_output.get("use_case") or "general"
+    quality_priority = desired_output.get("quality_priority") or "balanced"
+
+    profile = find_preference_profile(use_case=use_case, quality_priority=quality_priority)
+    if profile and int(profile.get("sample_count", 0)) > 0:
+        learned_target = int(profile.get("recommended_target_faces", PRESET_TARGETS["hero_standard"]))
+        learned_target = max(8000, min(learned_target, max(stats.face_count - 1, 8000)))
+        preset = _preset_for_target(learned_target)
+        target_faces = learned_target
+        performance_mode = stats.face_count > 50000 or stats.file_size_mb > 15
+        risk_level = _risk_level(stats.face_count)
+        reasons = [
+            (
+                f"Learned from positive feedback profile: "
+                f"{profile.get('use_case', 'general')} / {profile.get('quality_priority', 'balanced')} "
+                f"(samples={profile.get('sample_count', 0)})."
+            ),
+            "Recommendation adapted from saved user-approved outputs.",
+        ]
+    else:
+        preset, target_faces, performance_mode, risk_level, reasons = _recommend_for_stats(
+            face_count=stats.face_count,
+            file_size_mb=stats.file_size_mb,
+        )
+
+    source = "optimized" if use_latest else "original"
+    return OptimizationRecommendationResponse(
+        job_id=job_id,
+        source=source,
+        recommended_preset=preset,
+        recommended_target_faces=target_faces,
+        enable_performance_mode=performance_mode,
+        risk_level=risk_level,
+        reasons=reasons,
+    )
 
 
 @router.get("/status/{job_id}", response_model=JobStatus)

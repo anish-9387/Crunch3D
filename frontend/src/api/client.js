@@ -1,21 +1,21 @@
-import axios from 'axios'
+import axios from "axios";
 
-const API_BASE = '/api'
+const API_BASE = "/api";
 
-const api = axios.create({ baseURL: API_BASE })
+const api = axios.create({ baseURL: API_BASE });
 
 export async function uploadMesh(file, onProgress) {
-  const formData = new FormData()
-  formData.append('file', file)
-  const response = await api.post('/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await api.post("/upload", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
     onUploadProgress: (e) => {
       if (onProgress && e.total) {
-        onProgress(Math.round((e.loaded / e.total) * 100))
+        onProgress(Math.round((e.loaded / e.total) * 100));
       }
     },
-  })
-  return response.data
+  });
+  return response.data;
 }
 
 export async function optimizeMesh({
@@ -25,31 +25,75 @@ export async function optimizeMesh({
   generateLods,
   preserveNormals,
   preserveBoundaries,
+  reoptimizeFromLatest,
   strictQuality,
   maxDeviationPercent,
+  desiredOutput,
 }) {
-  const response = await api.post('/optimize', {
+  const response = await api.post("/optimize", {
     job_id: jobId,
     target_faces: targetFaces,
     preset: preset || null,
     generate_lods: generateLods || false,
     preserve_normals: preserveNormals !== false,
     preserve_boundaries: preserveBoundaries !== false,
+    reoptimize_from_latest: reoptimizeFromLatest !== false,
     strict_quality: strictQuality !== false,
     max_deviation_percent: maxDeviationPercent || 2.0,
-  })
-  return response.data
+    desired_output: desiredOutput || null,
+  });
+  return response.data;
 }
 
 export async function getJobStatus(jobId) {
-  const response = await api.get(`/status/${jobId}`)
-  return response.data
+  const response = await api.get(`/status/${jobId}`);
+  return response.data;
 }
 
 export function getDownloadUrl(jobId) {
-  return `${API_BASE}/download/${jobId}`
+  return `${API_BASE}/download/${jobId}`;
 }
 
 export function getPreviewUrl(jobId) {
-  return `${API_BASE}/preview/${jobId}`
+  return `${API_BASE}/preview/${jobId}`;
+}
+
+export async function submitFeedback({
+  jobId,
+  satisfied,
+  preserveShape,
+  preserveVertices,
+  preserveFaces,
+  rating,
+  issues,
+  notes,
+}) {
+  const response = await api.post("/feedback", {
+    job_id: jobId,
+    satisfied,
+    preserve_shape: preserveShape,
+    preserve_vertices: preserveVertices,
+    preserve_faces: preserveFaces,
+    rating: rating ?? null,
+    issues: issues || [],
+    notes: notes || null,
+  });
+  return response.data;
+}
+
+export async function getTrainingSummary() {
+  const response = await api.get("/training/summary");
+  return response.data;
+}
+
+export async function bootstrapTrainingModel() {
+  const response = await api.post("/training/bootstrap");
+  return response.data;
+}
+
+export async function getOptimizationRecommendation(jobId, fromLatest = false) {
+  const response = await api.get(`/recommend/${jobId}`, {
+    params: { from_latest: fromLatest },
+  });
+  return response.data;
 }
