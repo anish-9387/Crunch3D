@@ -1,5 +1,9 @@
 @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700&family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
 
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 * {
   margin: 0;
   padding: 0;
@@ -80,12 +84,16 @@ body,
 body {
   position: relative;
   font-family: "Rajdhani", "Segoe UI", sans-serif;
-  background: var(--app-gradient);
+  background: var(--bg-primary);
   color: var(--text-primary);
   min-height: 100vh;
 }
 
-body::before {
+body[data-view="demo"] {
+  background: var(--app-gradient);
+}
+
+body[data-view="demo"]::before {
   content: "";
   position: fixed;
   inset: 0;
