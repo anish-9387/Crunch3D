@@ -1,6 +1,6 @@
 # Crunch3D
 
-> Intelligent 3D mesh optimization. Not just smaller — smarter.
+> Intelligent 3D mesh optimization. Not just smaller - smarter.
 
 Crunch3D is a full-stack mesh optimization platform built for developers and 3D artists who need production-ready assets without the hours of manual retopology. AI-generated meshes from Tripo3D, Meshy, and Shap-E ship with 700K–800K+ polygons. They're beautiful. They're also completely unusable in real-time environments.
 
@@ -14,7 +14,7 @@ Crunch3D fixes that.
 |---|---|---|
 | Traditional decimators | Reduce polygon count | Treat every triangle equally |
 | Manual retopology | Full artist control | Takes hours, costs $300–500/mo in software |
-| **Crunch3D** | **Intelligent reduction** | **Nothing — that's the point** |
+| **Crunch3D** | **Intelligent reduction** | **Production readiness** |
 
 Standard mesh optimization tools apply the same reduction uniformly across a mesh. A face gets the same priority as a fingertip. An empty background surface gets the same protection as a mechanical joint.
 
@@ -28,6 +28,7 @@ Upload a mesh. Crunch3D analyzes it instantly — face count, vertex count, UVs,
 
 ---
 
+
 ## Current Capabilities
 
 ### Mesh Upload & Analysis
@@ -39,6 +40,16 @@ Upload a mesh. Crunch3D analyzes it instantly — face count, vertex count, UVs,
 - Quadric Error Metrics (QEM) simplification via PyMeshLab
 - Boundary and normal preservation through decimation
 - **Quality Guard** — samples up to 700 vertices pre-decimation, measures 95th-percentile surface deviation, and automatically relaxes the target face count if shape fidelity would break
+
+## Current MVP Screenshots
+
+### Interactive Mesh Optimization Demo
+
+![Interactive Mesh Optimization Demo](frontend/assets/demo_beforeafter.png)
+
+### High-Poly vs Optimized Mesh Comparison
+
+![High-Poly vs Optimized Mesh Comparison](frontend/assets/before_after_3.png)
 
 ### Platform Presets
 
@@ -214,7 +225,7 @@ Traditional mesh optimization stops at polygon reduction.
 
 Crunch3D is being built toward **production readiness** — a complete understanding of what makes a mesh deployment-ready, not just lighter.
 
-The current MVP delivers reliable, quality-guarded decimation. The roadmap below is where Crunch3D becomes something no other tool in this space currently is.
+The current MVP delivers reliable, quality-guarded decimation. The roadmap below expands Crunch3D beyond traditional mesh simplification into production-readiness optimization.
 
 ---
 

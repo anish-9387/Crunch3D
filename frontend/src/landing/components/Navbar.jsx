@@ -17,7 +17,7 @@ export default function Navbar({ onTryDemo }) {
             <path d="M17.657 6.343l-11.314 11.314" />
             <path d="M6.343 6.343l11.314 11.314" />
           </svg>
-          <span className="text-[#F2F2F2] text-[15px] tracking-wide font-semibold">OptiMesh</span>
+          <span className="text-[#F2F2F2] text-[15px] tracking-wide font-semibold">Crunch3d</span>
         </div>
 
         <div className="flex items-center px-1 py-1 bg-[#0A0A0A] border border-white/5 rounded-[14px]">

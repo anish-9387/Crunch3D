@@ -16,13 +16,13 @@ export default function AboutSection({ onGenerateLods }) {
           >
             <path d="M12 2v20M17 5l-10 14M22 12H2M20 17L4 7" />
           </svg>
-          <span className="text-[#0A0A0A] text-[14px] md:text-[15px] font-semibold tracking-wide">OptiMesh</span>
+          <span className="text-[#0A0A0A] text-[14px] md:text-[15px] font-semibold tracking-wide">Crunch3d</span>
         </div>
       </div>
 
       <div className="w-full max-w-[1000px] text-left mb-20 px-1">
         <h2 className="text-[32px] md:text-[46px] lg:text-[54px] font-medium tracking-tight leading-[1.15] text-[#F2F2F2]">
-          OptiMesh transforms heavy 3D models into optimized real-time assets for modern graphics workflows.
+          Crunch3d transforms heavy 3D models into optimized real-time assets for modern graphics workflows.
         </h2>
         <h3 className="text-[20px] md:text-[28px] lg:text-[34px] font-medium tracking-tight leading-[1.2] text-[#888888] mt-4">
           Designed for developers, artists, and real-time rendering systems.

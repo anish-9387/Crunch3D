@@ -9,7 +9,7 @@ export default function Layout({ children, onTryDemo }) {
         <main className="flex flex-col flex-1 justify-center gap-12 lg:gap-16">{children}</main>
 
         <footer className="w-full border-t border-white/10 pt-8 pb-12 flex justify-between text-sm text-brand-muted">
-          <p>© 2026 OptiMesh. Open-source 3D optimization.</p>
+          <p>© 2026 Crunch3d. Open-source 3D optimization.</p>
           <div className="flex gap-4">
             <a href="#" className="hover:text-brand-white">
               GitHub
