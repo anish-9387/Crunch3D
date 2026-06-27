@@ -1,16 +1,44 @@
+"""
+mesh_optimizer.py — Crunch3D / OptiMesh
+Clean rewrite with proper multi-component mesh handling.
+
+Architecture:
+  input_file
+    → Trimesh  (split into N components)
+    → PyMeshLab per component  (QEM decimation)
+    → Trimesh  (merge all components back)
+    → output_file
+
+All function signatures are identical to the original so nothing
+else in the codebase needs to change.
+"""
+
+from __future__ import annotations
+
 import os
 import tempfile
 from pathlib import Path
+
 import numpy as np
 import pymeshlab
 import trimesh
+import trimesh.util
+
 from ..models.schemas import MeshStats, LODResult
 
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 SUPPORTED_SAVE_EXTENSIONS = {".obj", ".stl", ".ply", ".off"}
 QUALITY_SAMPLE_CAP = 700
 QUALITY_CHUNK_SIZE = 160
 
+
+# ---------------------------------------------------------------------------
+# Helpers — format
+# ---------------------------------------------------------------------------
 
 def resolve_output_extension(input_extension: str) -> str:
     ext = (input_extension or "").lower().strip()
@@ -19,22 +47,90 @@ def resolve_output_extension(input_extension: str) -> str:
     return ext if ext in SUPPORTED_SAVE_EXTENSIONS else ".obj"
 
 
-def _apply_decimation(
-    ms: pymeshlab.MeshSet,
-    target_faces: int,
-    preserve_normals: bool,
-    preserve_boundaries: bool,
-):
-    ms.apply_filter(
-        "meshing_decimation_quadric_edge_collapse",
-        targetfacenum=int(max(target_faces, 4)),
-        preservenormal=preserve_normals,
-        preserveboundary=preserve_boundaries,
-        preservetopology=True,
-        planarquadric=True,
-        qualitythr=0.2,
-    )
+# ---------------------------------------------------------------------------
+# Helpers — component loading / saving
+# ---------------------------------------------------------------------------
 
+def _load_components(path: str | Path) -> list[trimesh.Trimesh]:
+    """
+    Load a mesh file and return a flat list of Trimesh components.
+
+    Handles:
+      - Single Trimesh  (already one piece)
+      - trimesh.Scene   (GLB / GLTF / FBX / multi-group OBJ)
+      - Disconnected geometry inside a single Trimesh (split by body)
+
+    Always returns at least one component or raises ValueError.
+    """
+    loaded = trimesh.load(str(path), process=False)
+
+    meshes: list[trimesh.Trimesh] = []
+
+    if isinstance(loaded, trimesh.Scene):
+        for geom in loaded.geometry.values():
+            if isinstance(geom, trimesh.Trimesh) and len(geom.faces) > 0:
+                meshes.append(geom)
+
+    elif isinstance(loaded, trimesh.Trimesh):
+        # Split into disconnected bodies so QEM never sees unrelated geometry
+        # merged into a single vertex soup.
+        parts = loaded.split(only_watertight=False)
+        for p in parts:
+            if isinstance(p, trimesh.Trimesh) and len(p.faces) > 0:
+                meshes.append(p)
+        if not meshes and len(loaded.faces) > 0:
+            meshes.append(loaded)
+
+    if not meshes:
+        raise ValueError(f"No usable mesh geometry found in: {path}")
+
+    return meshes
+
+
+def _component_to_pymeshlab(mesh: trimesh.Trimesh) -> pymeshlab.MeshSet:
+    """Export a Trimesh component to a temp OBJ, load it into a fresh MeshSet."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".obj", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    try:
+        mesh.export(tmp_path)
+        ms = pymeshlab.MeshSet()
+        ms.load_new_mesh(tmp_path)
+    finally:
+        _safe_remove(tmp_path)
+    return ms
+
+
+def _pymeshlab_to_trimesh(ms: pymeshlab.MeshSet) -> trimesh.Trimesh | None:
+    """Save the current MeshSet mesh to a temp OBJ, reload as Trimesh."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".obj", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    try:
+        _save_current_mesh(ms, tmp_path)
+        result = trimesh.load(tmp_path, process=False)
+        if isinstance(result, trimesh.Scene):
+            parts = [g for g in result.geometry.values()
+                     if isinstance(g, trimesh.Trimesh) and len(g.faces) > 0]
+            return trimesh.util.concatenate(parts) if parts else None
+        if isinstance(result, trimesh.Trimesh) and len(result.faces) > 0:
+            return result
+        return None
+    finally:
+        _safe_remove(tmp_path)
+
+
+def _safe_remove(path: str) -> None:
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Helpers — PyMeshLab save (unchanged from original, kept for compatibility)
+# ---------------------------------------------------------------------------
 
 def _save_current_mesh(ms: pymeshlab.MeshSet, output_path: str | Path) -> None:
     output_path = str(output_path)
@@ -59,12 +155,11 @@ def _save_current_mesh(ms: pymeshlab.MeshSet, output_path: str | Path) -> None:
         except Exception as exc:
             last_error = exc
 
-    # Final fallback: export pure geometry through trimesh to bypass texture/plugin issues.
+    # Final fallback: export pure geometry through trimesh.
     try:
         mesh = ms.current_mesh()
         vertices = np.asarray(mesh.vertex_matrix(), dtype=np.float64)
         faces = np.asarray(mesh.face_matrix(), dtype=np.int64)
-
         if vertices.size > 0 and faces.size > 0:
             tri_mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
             tri_mesh.export(output_path)
@@ -75,32 +170,11 @@ def _save_current_mesh(ms: pymeshlab.MeshSet, output_path: str | Path) -> None:
     raise RuntimeError(f"Could not save mesh output: {last_error}")
 
 
-def _build_target_candidates(
-    current_faces: int,
-    target_faces: int,
-    max_target_overshoot_percent: float,
-) -> list[int]:
-    target = int(max(4, min(target_faces, current_faces - 1)))
-    overshoot_factor = max(0.0, float(max_target_overshoot_percent)) / 100.0
-    cap = int(round(target * (1.0 + overshoot_factor)))
-    cap = int(max(target, min(cap, current_faces - 1)))
-
-    candidates: list[int] = []
-
-    for ratio in [0.0, 0.03, 0.06, 0.09, 0.12]:
-        candidate = target + int((cap - target) * ratio / 0.12) if cap > target else target
-        candidate = int(max(4, min(candidate, cap)))
-        if candidate not in candidates:
-            candidates.append(candidate)
-
-    if cap not in candidates:
-        candidates.append(cap)
-
-    return candidates
-
+# ---------------------------------------------------------------------------
+# Helpers — topology cleanup
+# ---------------------------------------------------------------------------
 
 def _apply_structure_preclean(ms: pymeshlab.MeshSet) -> None:
-    # Best-effort topology cleanup before decimation to avoid local vertex collapse artifacts.
     for filter_name, kwargs in [
         ("meshing_remove_duplicate_vertices", {}),
         ("meshing_remove_duplicate_faces", {}),
@@ -114,52 +188,114 @@ def _apply_structure_preclean(ms: pymeshlab.MeshSet) -> None:
             continue
 
 
-def _load_trimesh(path: str | Path) -> trimesh.Trimesh:
-    loaded = trimesh.load(str(path), process=False, force="mesh")
+# ---------------------------------------------------------------------------
+# Core — per-component QEM decimation
+# ---------------------------------------------------------------------------
 
-    if isinstance(loaded, trimesh.Scene):
-        meshes = [geom for geom in loaded.geometry.values() if isinstance(geom, trimesh.Trimesh)]
-        if not meshes:
-            raise ValueError("No mesh geometry found for quality validation")
-        loaded = trimesh.util.concatenate(meshes)
+def _apply_decimation(
+    ms: pymeshlab.MeshSet,
+    target_faces: int,
+    preserve_normals: bool,
+    preserve_boundaries: bool,
+) -> None:
+    ms.apply_filter(
+        "meshing_decimation_quadric_edge_collapse",
+        targetfacenum=int(max(target_faces, 4)),
+        preservenormal=preserve_normals,
+        preserveboundary=preserve_boundaries,
+        preservetopology=False,   # True breaks disconnected components
+        planarquadric=False,      # Distorts curved/organic surfaces
+        qualitythr=0.3,
+    )
 
-    if not isinstance(loaded, trimesh.Trimesh):
-        raise ValueError("Unsupported mesh type for quality validation")
-    if loaded.faces is None or len(loaded.faces) == 0:
-        raise ValueError("Mesh has no faces for quality validation")
 
-    return loaded
+def _decimate_component(
+    mesh: trimesh.Trimesh,
+    target_faces: int,
+    preserve_normals: bool,
+    preserve_boundaries: bool,
+) -> trimesh.Trimesh | None:
+    """
+    Run QEM on a single Trimesh component.
+    Returns decimated Trimesh, or None if something went wrong.
+    """
+    ms = _component_to_pymeshlab(mesh)
+    _apply_structure_preclean(ms)
 
+    current_faces = ms.current_mesh().face_number()
+    if target_faces < current_faces:
+        _apply_decimation(ms, target_faces, preserve_normals, preserve_boundaries)
+
+    return _pymeshlab_to_trimesh(ms)
+
+
+def _decimate_all_components(
+    components: list[trimesh.Trimesh],
+    target_faces: int,
+    preserve_normals: bool,
+    preserve_boundaries: bool,
+) -> trimesh.Trimesh:
+    """
+    Decimate each component proportionally, then merge back into one mesh.
+    """
+    total_faces = sum(len(c.faces) for c in components)
+    output_parts: list[trimesh.Trimesh] = []
+
+    for component in components:
+        if len(component.faces) == 0:
+            continue
+
+        # Give each component a face budget proportional to its share of total geometry
+        ratio = len(component.faces) / total_faces if total_faces > 0 else 1.0
+        component_target = max(4, int(target_faces * ratio))
+
+        result = _decimate_component(
+            mesh=component,
+            target_faces=component_target,
+            preserve_normals=preserve_normals,
+            preserve_boundaries=preserve_boundaries,
+        )
+        if result is not None:
+            output_parts.append(result)
+
+    if not output_parts:
+        raise RuntimeError("All mesh components failed decimation")
+
+    if len(output_parts) == 1:
+        return output_parts[0]
+
+    return trimesh.util.concatenate(output_parts)
+
+
+# ---------------------------------------------------------------------------
+# Helpers — quality guard
+# ---------------------------------------------------------------------------
 
 def _sample_vertices(vertices: np.ndarray, max_count: int) -> np.ndarray:
     if vertices.shape[0] <= max_count:
         return vertices
-
     rng = np.random.default_rng(42)
     indices = rng.choice(vertices.shape[0], max_count, replace=False)
     return vertices[indices]
 
 
-def _build_quality_reference(input_path: str | Path) -> dict | None:
-    try:
-        mesh = _load_trimesh(input_path)
-    except Exception:
+def _build_quality_reference(components: list[trimesh.Trimesh]) -> dict | None:
+    all_vertices = np.vstack([np.asarray(c.vertices, dtype=np.float64)
+                               for c in components if len(c.vertices) > 0])
+    if len(all_vertices) == 0:
         return None
 
-    diagonal = float(np.linalg.norm(mesh.bounding_box.extents))
+    all_faces = sum(len(c.faces) for c in components)
+    if all_faces == 0:
+        return None
+
+    combined = trimesh.util.concatenate(components)
+    diagonal = float(np.linalg.norm(combined.bounding_box.extents))
     if diagonal <= 1e-9:
         return None
 
-    vertices = np.asarray(mesh.vertices, dtype=np.float64)
-    if vertices.shape[0] == 0:
-        return None
-
-    sampled_vertices = _sample_vertices(vertices, QUALITY_SAMPLE_CAP)
-
-    return {
-        "points": sampled_vertices,
-        "diagonal": diagonal,
-    }
+    sampled = _sample_vertices(all_vertices, QUALITY_SAMPLE_CAP)
+    return {"points": sampled, "diagonal": diagonal}
 
 
 def _nearest_neighbor_distances(source: np.ndarray, target: np.ndarray) -> np.ndarray:
@@ -175,60 +311,74 @@ def _nearest_neighbor_distances(source: np.ndarray, target: np.ndarray) -> np.nd
     return np.sqrt(min_dist_sq)
 
 
-def _surface_deviation_percent(quality_ref: dict, optimized_path: str | Path) -> float | None:
-    try:
-        optimized_mesh = _load_trimesh(optimized_path)
-    except Exception:
-        return None
-
-    optimized_points = np.asarray(optimized_mesh.vertices, dtype=np.float64)
+def _surface_deviation_percent(
+    quality_ref: dict,
+    result_mesh: trimesh.Trimesh,
+) -> float | None:
+    optimized_points = np.asarray(result_mesh.vertices, dtype=np.float64)
     if optimized_points.shape[0] == 0:
         return None
+
     optimized_points = _sample_vertices(optimized_points, QUALITY_SAMPLE_CAP)
     reference_points = quality_ref["points"]
 
     src_to_dst = _nearest_neighbor_distances(reference_points, optimized_points)
     dst_to_src = _nearest_neighbor_distances(optimized_points, reference_points)
 
-    p95_distance = float(max(np.percentile(src_to_dst, 95), np.percentile(dst_to_src, 95)))
-    deviation_percent = (p95_distance / quality_ref["diagonal"]) * 100
-
-    return round(float(deviation_percent), 4)
+    p95 = float(max(np.percentile(src_to_dst, 95), np.percentile(dst_to_src, 95)))
+    return round((p95 / quality_ref["diagonal"]) * 100, 4)
 
 
-def _is_quality_metric_reliable(
-    input_path: str | Path,
-    quality_ref: dict | None,
-    max_deviation_percent: float,
-) -> bool:
-    if quality_ref is None:
-        return False
+def _build_target_candidates(
+    current_faces: int,
+    target_faces: int,
+    max_target_overshoot_percent: float,
+) -> list[int]:
+    target = int(max(4, min(target_faces, current_faces - 1)))
+    overshoot_factor = max(0.0, float(max_target_overshoot_percent)) / 100.0
+    cap = int(max(target, min(int(round(target * (1.0 + overshoot_factor))), current_faces - 1)))
 
-    baseline_path: str | None = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".obj", delete=False) as tmp:
-            baseline_path = tmp.name
+    candidates: list[int] = []
+    for ratio in [0.0, 0.03, 0.06, 0.09, 0.12]:
+        candidate = target + int((cap - target) * ratio / 0.12) if cap > target else target
+        candidate = int(max(4, min(candidate, cap)))
+        if candidate not in candidates:
+            candidates.append(candidate)
 
-        ms = pymeshlab.MeshSet()
-        ms.load_new_mesh(str(input_path))
-        _save_current_mesh(ms, baseline_path)
+    if cap not in candidates:
+        candidates.append(cap)
 
-        baseline_deviation = _surface_deviation_percent(quality_ref, baseline_path)
-        if baseline_deviation is None:
-            return False
+    return candidates
 
-        # Allow a small conversion tolerance, but treat very high baseline error as unreliable.
-        reliability_limit = max(max_deviation_percent * 1.5, 0.5)
-        return baseline_deviation <= reliability_limit
-    except Exception:
-        return False
-    finally:
-        if baseline_path and os.path.exists(baseline_path):
-            try:
-                os.remove(baseline_path)
-            except Exception:
-                pass
 
+# ---------------------------------------------------------------------------
+# Helpers — stats
+# ---------------------------------------------------------------------------
+
+def _stats_from_trimesh(mesh: trimesh.Trimesh, output_path: str) -> MeshStats:
+    file_size = os.path.getsize(output_path)
+    bb = mesh.bounding_box
+    extents = bb.extents.tolist()
+    bounds = mesh.bounds  # shape (2, 3)
+    bounding_box = {
+        "min": bounds[0].tolist(),
+        "max": bounds[1].tolist(),
+        "diagonal": float(np.linalg.norm(extents)),
+    }
+    return MeshStats(
+        vertex_count=len(mesh.vertices),
+        face_count=len(mesh.faces),
+        file_size_bytes=file_size,
+        file_size_mb=round(file_size / (1024 * 1024), 3),
+        has_uvs=hasattr(mesh, "visual") and hasattr(mesh.visual, "uv") and mesh.visual.uv is not None,
+        has_normals=mesh.vertex_normals is not None and len(mesh.vertex_normals) > 0,
+        bounding_box=bounding_box,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public API — decimate_mesh  (signature unchanged)
+# ---------------------------------------------------------------------------
 
 def decimate_mesh(
     input_path: str | Path,
@@ -243,39 +393,32 @@ def decimate_mesh(
     input_path = str(input_path)
     output_path = str(output_path)
 
-    inspection_mesh = pymeshlab.MeshSet()
-    inspection_mesh.load_new_mesh(input_path)
+    # ── 1. Load all components ──────────────────────────────────────────────
+    components = _load_components(input_path)
+    total_faces = sum(len(c.faces) for c in components)
 
-    current_faces = inspection_mesh.current_mesh().face_number()
-    if current_faces <= 4:
-        _save_current_mesh(inspection_mesh, output_path)
-        return _get_stats(output_path, inspection_mesh), {
-            "target_faces_used": current_faces,
+    # ── 2. Skip decimation if mesh is already at or below target ───────────
+    if total_faces <= 4 or target_faces >= total_faces:
+        combined = (trimesh.util.concatenate(components)
+                    if len(components) > 1 else components[0])
+        combined.export(output_path)
+        stats = _stats_from_trimesh(combined, output_path)
+        return stats, {
+            "target_faces_used": total_faces,
             "quality_deviation_percent": 0.0,
             "quality_guard_relaxed": False,
             "quality_guard_satisfied": True,
         }
 
-    requested_target = int(max(4, min(target_faces, current_faces - 1)))
+    requested_target = int(max(4, min(target_faces, total_faces - 1)))
 
-    if requested_target >= current_faces:
-        _save_current_mesh(inspection_mesh, output_path)
-        return _get_stats(output_path, inspection_mesh), {
-            "target_faces_used": current_faces,
-            "quality_deviation_percent": 0.0,
-            "quality_guard_relaxed": False,
-            "quality_guard_satisfied": True,
-        }
+    # ── 3. Build quality reference from original components ────────────────
+    quality_ref = _build_quality_reference(components) if strict_quality else None
 
-    quality_ref = _build_quality_reference(input_path) if strict_quality else None
-    if strict_quality and quality_ref is not None:
-        if not _is_quality_metric_reliable(input_path, quality_ref, max_deviation_percent):
-            # Some scene formats can report inflated deviations after conversion.
-            # In those cases, use decimation without the geometric lock metric.
-            quality_ref = None
+    # ── 4. Build candidate targets for quality-guard retry loop ───────────
     candidate_targets = (
         _build_target_candidates(
-            current_faces=current_faces,
+            current_faces=total_faces,
             target_faces=requested_target,
             max_target_overshoot_percent=max_target_overshoot_percent,
         )
@@ -286,37 +429,33 @@ def decimate_mesh(
     last_stats: MeshStats | None = None
     last_deviation: float | None = None
     last_target = requested_target
+    last_result: trimesh.Trimesh | None = None
 
+    # ── 5. Retry loop — tighten target until quality guard is satisfied ────
     for candidate_target in candidate_targets:
-        ms = pymeshlab.MeshSet()
-        ms.load_new_mesh(input_path)
-        # _apply_structure_preclean(ms)  # Rollback the preclean step
-        _apply_decimation(
-            ms=ms,
+        result = _decimate_all_components(
+            components=components,
             target_faces=candidate_target,
             preserve_normals=preserve_normals,
             preserve_boundaries=preserve_boundaries,
         )
-        _save_current_mesh(ms, output_path)
 
-        stats = _get_stats(output_path, ms)
-        deviation_percent = _surface_deviation_percent(quality_ref, output_path) if quality_ref else None
+        result.export(output_path)
+        stats = _stats_from_trimesh(result, output_path)
+        deviation = _surface_deviation_percent(quality_ref, result) if quality_ref else None
 
         last_stats = stats
-        last_deviation = deviation_percent
+        last_deviation = deviation
         last_target = candidate_target
+        last_result = result
 
-        if not strict_quality:
+        if not strict_quality or quality_ref is None:
             break
 
-        if quality_ref is None:
-            # Quality check unavailable for this mesh format; keep strict-preserving settings.
-            break
-
-        if deviation_percent is not None and deviation_percent <= max_deviation_percent:
+        if deviation is not None and deviation <= max_deviation_percent:
             return stats, {
                 "target_faces_used": stats.face_count,
-                "quality_deviation_percent": deviation_percent,
+                "quality_deviation_percent": deviation,
                 "quality_guard_relaxed": candidate_target != requested_target,
                 "quality_guard_satisfied": True,
             }
@@ -335,6 +474,10 @@ def decimate_mesh(
         "quality_guard_satisfied": quality_guard_satisfied,
     }
 
+
+# ---------------------------------------------------------------------------
+# Public API — generate_lods  (signature unchanged)
+# ---------------------------------------------------------------------------
 
 def generate_lods(
     input_path: str | Path,
@@ -355,68 +498,42 @@ def generate_lods(
         "LOD3": 0.1,
     }
 
-    results = []
     ext = resolve_output_extension(output_extension or Path(input_path).suffix)
+    components = _load_components(input_path)
+    total_faces = sum(len(c.faces) for c in components)
+
+    results: list[LODResult] = []
 
     for level, ratio in lod_ratios.items():
-        target = max(int(original_faces * ratio), 100)
+        target = max(int(total_faces * ratio), 100)
         output_file = output_dir / f"{base_name}_{level}{ext}"
 
-        ms = pymeshlab.MeshSet()
-        ms.load_new_mesh(str(input_path))
-
-        if ratio < 1.0:
-            _apply_decimation(
-                ms=ms,
+        if ratio >= 1.0:
+            # LOD0 — just re-export the original without touching it
+            combined = (trimesh.util.concatenate(components)
+                        if len(components) > 1 else components[0])
+            combined.export(str(output_file))
+            result_mesh = combined
+        else:
+            result_mesh = _decimate_all_components(
+                components=components,
                 target_faces=target,
                 preserve_normals=preserve_normals,
                 preserve_boundaries=preserve_boundaries,
             )
+            result_mesh.export(str(output_file))
 
-        _save_current_mesh(ms, output_file)
-        mesh = ms.current_mesh()
         file_size = os.path.getsize(output_file)
-
-        reduction = 0.0
-        if original_faces > 0:
-            reduction = round((1 - mesh.face_number() / original_faces) * 100, 1)
+        face_count = len(result_mesh.faces)
+        reduction = round((1 - face_count / original_faces) * 100, 1) if original_faces > 0 else 0.0
 
         results.append(LODResult(
             level=level,
-            face_count=mesh.face_number(),
-            vertex_count=mesh.vertex_number(),
+            face_count=face_count,
+            vertex_count=len(result_mesh.vertices),
             filename=output_file.name,
             file_size_mb=round(file_size / (1024 * 1024), 3),
             reduction_percent=reduction,
         ))
 
     return results
-
-
-def _get_stats(filepath: str, ms: pymeshlab.MeshSet) -> MeshStats:
-    mesh = ms.current_mesh()
-    file_size = os.path.getsize(filepath)
-    has_uvs = mesh.has_wedge_tex_coord() if hasattr(mesh, 'has_wedge_tex_coord') else False
-    has_normals = mesh.has_vertex_normal() if hasattr(mesh, 'has_vertex_normal') else False
-
-    bounding_box = None
-    if hasattr(mesh, 'bounding_box'):
-        try:
-            bb = mesh.bounding_box()
-            bounding_box = {
-                "min": [bb.min()[0], bb.min()[1], bb.min()[2]],
-                "max": [bb.max()[0], bb.max()[1], bb.max()[2]],
-                "diagonal": bb.diagonal(),
-            }
-        except Exception:
-            bounding_box = None
-
-    return MeshStats(
-        vertex_count=mesh.vertex_number(),
-        face_count=mesh.face_number(),
-        file_size_bytes=file_size,
-        file_size_mb=round(file_size / (1024 * 1024), 3),
-        has_uvs=has_uvs,
-        has_normals=has_normals,
-        bounding_box=bounding_box,
-    )

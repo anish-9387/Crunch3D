@@ -268,7 +268,7 @@ export default function DemoApp() {
     <div className="app">
       <header className="header">
         <div>
-          <h1>OptiMesh</h1>
+          <h1>Crunch3D</h1>
           <p>3D Mesh Optimization & LOD Generation</p>
         </div>
         <div className="header-actions">
