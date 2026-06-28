@@ -488,4 +488,3 @@ The Vite dev server proxies all `/api/*` calls to port 8000 automatically.
 - **Rigged meshes** — Skinned/animated meshes with bone weights are not supported. Static meshes only.
 - **Job persistence** — Jobs are stored in memory. Restarting the backend clears all state.
 - **Concurrency** — No async job queue. Large meshes block during decimation.
-
