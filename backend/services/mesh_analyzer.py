@@ -44,9 +44,22 @@ def _load_components(path: str | Path) -> list[trimesh.Trimesh]:
     meshes: list[trimesh.Trimesh] = []
 
     if isinstance(loaded, trimesh.Scene):
-        for geom in loaded.geometry.values():
-            if isinstance(geom, trimesh.Trimesh) and len(geom.faces) > 0:
-                meshes.append(geom)
+        for node_name in loaded.graph.nodes_geometry:
+            val = loaded.graph[node_name]
+            transform = val[0]
+            geom_name = val[1] if len(val) >= 2 else node_name
+            geom = loaded.geometry.get(geom_name)
+            if not isinstance(geom, trimesh.Trimesh) or len(geom.faces) == 0:
+                continue
+            verts = trimesh.transformations.transform_points(
+                geom.vertices.copy(), transform
+            )
+            transformed = trimesh.Trimesh(
+                vertices=verts,
+                faces=geom.faces.copy(),
+                process=False,
+            )
+            meshes.append(transformed)
 
     elif isinstance(loaded, trimesh.Trimesh):
         # A plain file may contain disconnected bodies merged into one

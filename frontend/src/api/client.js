@@ -55,11 +55,13 @@ export async function getJobStatus(jobId) {
 }
 
 export function getDownloadUrl(jobId) {
-  return `${API_BASE}/download/${jobId}`;
+  const t = Date.now();
+  return `${API_BASE}/download/${jobId}?t=${t}`;
 }
 
 export function getPreviewUrl(jobId) {
-  return `${API_BASE}/preview/${jobId}`;
+  const t = Date.now();
+  return `${API_BASE}/preview/${jobId}?t=${t}`;
 }
 
 export async function submitFeedback({

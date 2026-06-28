@@ -4,5 +4,6 @@ python-multipart==0.0.20
 pymeshlab==2025.7.post1
 trimesh==4.5.3
 numpy>=2.0.0
+scipy>=1.14.0
 pydantic>=2.10.0
 aiofiles==24.1.0

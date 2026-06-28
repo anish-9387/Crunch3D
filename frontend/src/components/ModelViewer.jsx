@@ -120,7 +120,7 @@ function CameraReporter({ onCameraChange }) {
   return null
 }
 
-function MeshFromUrl({ url, filename, wireframe, onModelReady, onModelError }) {
+function MeshFromUrl({ url, filename, wireframe, onModelReady, onModelError, viewerName }) {
   const [object, setObject] = useState(null)
 
   useEffect(() => {
@@ -133,6 +133,18 @@ function MeshFromUrl({ url, filename, wireframe, onModelReady, onModelError }) {
 
     function onSuccess(obj) {
       if (cancelled) return
+      console.group('MeshFromUrl:', viewerName || 'unnamed')
+      console.log('Model URL:', url)
+      console.log('Filename:', filename)
+      obj.traverse((child) => {
+        if (!child.isMesh || !child.geometry) return
+        const geom = child.geometry
+        const pos = geom.getAttribute('position')
+        const verts = pos ? pos.count : 0
+        const faces = geom.index ? Math.floor(geom.index.count / 3) : Math.floor(verts / 3)
+        console.log(`  Mesh "${child.name}" — Vertices: ${verts}, Faces: ${faces}`)
+      })
+      console.groupEnd()
       setObject(obj)
       onModelReady?.(collectModelSummary(obj))
     }
@@ -164,6 +176,17 @@ function MeshFromUrl({ url, filename, wireframe, onModelReady, onModelError }) {
 
     return () => {
       cancelled = true
+      // Dispose previous object's geometry to prevent stale render artifacts
+      setObject((prev) => {
+        if (prev) {
+          prev.traverse((child) => {
+            if (child.isMesh) {
+              child.geometry?.dispose()
+            }
+          })
+        }
+        return null
+      })
     }
   }, [url, filename, onModelReady, onModelError])
 
@@ -204,7 +227,7 @@ function MeshFromUrl({ url, filename, wireframe, onModelReady, onModelError }) {
   )
 }
 
-function Scene({ url, filename, wireframe, onModelReady, onModelError, onCameraChange, performanceMode }) {
+function Scene({ url, filename, wireframe, onModelReady, onModelError, onCameraChange, performanceMode, viewerName }) {
   return (
     <>
       <ambientLight intensity={0.7} />
@@ -218,6 +241,7 @@ function Scene({ url, filename, wireframe, onModelReady, onModelError, onCameraC
             wireframe={wireframe}
             onModelReady={onModelReady}
             onModelError={onModelError}
+            viewerName={viewerName}
           />
         )}
       </Suspense>
@@ -346,6 +370,7 @@ export default function ModelViewer({
                 onModelError={handleModelError}
                 onCameraChange={handleCameraChange}
                 performanceMode={performanceMode}
+                viewerName="Original"
               />
             </Canvas>
           </div>
@@ -364,7 +389,7 @@ export default function ModelViewer({
                 onModelError={handleModelError}
                 onCameraChange={handleCameraChange}
                 performanceMode={performanceMode}
-              />
+                viewerName="Optimized" />
             </Canvas>
           </div>
         </div>
@@ -392,7 +417,7 @@ export default function ModelViewer({
               onModelError={handleModelError}
               onCameraChange={handleCameraChange}
               performanceMode={performanceMode}
-            />
+              viewerName={optimizedUrl ? 'Single-View (Optimized)' : 'Single-View (Original)'} />
           </Canvas>
         </div>
       )}

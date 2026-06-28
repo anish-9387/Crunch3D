@@ -15,6 +15,7 @@ else in the codebase needs to change.
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -24,7 +25,10 @@ import pymeshlab
 import trimesh
 import trimesh.util
 
+logger = logging.getLogger(__name__)
+
 from ..models.schemas import MeshStats, LODResult
+from .importance_mapper import compute_importance
 
 
 # ---------------------------------------------------------------------------
@@ -67,9 +71,25 @@ def _load_components(path: str | Path) -> list[trimesh.Trimesh]:
     meshes: list[trimesh.Trimesh] = []
 
     if isinstance(loaded, trimesh.Scene):
-        for geom in loaded.geometry.values():
-            if isinstance(geom, trimesh.Trimesh) and len(geom.faces) > 0:
-                meshes.append(geom)
+        for node_name in loaded.graph.nodes_geometry:
+            val = loaded.graph[node_name]
+            transform = val[0]
+            geom_name = val[1] if len(val) >= 2 else node_name
+            geom = loaded.geometry.get(geom_name)
+            if not isinstance(geom, trimesh.Trimesh) or len(geom.faces) == 0:
+                continue
+            # Apply the node's scene-graph transform to bring the mesh into
+            # world-space so all components share a common coordinate frame
+            # before optimisation.
+            verts = trimesh.transformations.transform_points(
+                geom.vertices.copy(), transform
+            )
+            transformed = trimesh.Trimesh(
+                vertices=verts,
+                faces=geom.faces.copy(),
+                process=False,
+            )
+            meshes.append(transformed)
 
     elif isinstance(loaded, trimesh.Trimesh):
         # Split into disconnected bodies so QEM never sees unrelated geometry
@@ -198,15 +218,147 @@ def _apply_decimation(
     preserve_normals: bool,
     preserve_boundaries: bool,
 ) -> None:
+    """
+    Run importance-weighted (quality-weighted) QEM on the current mesh.
+
+    The per-vertex quality scalar must have been injected beforehand (see
+    ``_inject_importance_as_quality``).  When ``qualityweight=True``
+    the quadric error metric penalises collapsing high-quality (high-importance)
+    vertices, biasing decimation toward low-importance regions.
+    """
     ms.apply_filter(
         "meshing_decimation_quadric_edge_collapse",
         targetfacenum=int(max(target_faces, 4)),
         preservenormal=preserve_normals,
         preserveboundary=preserve_boundaries,
-        preservetopology=False,   # True breaks disconnected components
-        planarquadric=False,      # Distorts curved/organic surfaces
+        preservetopology=False,       # True breaks disconnected components
+        planarquadric=False,          # Distorts curved/organic surfaces
         qualitythr=0.3,
+        qualityweight=True,
+        selected=False,
     )
+
+
+def _inject_importance_as_quality(ms: pymeshlab.MeshSet, importance: np.ndarray) -> bool:
+    """
+    Write per-vertex importance scores into PyMeshLab's quality field.
+
+    PyMeshLab's weighted QEM reads from this field when qualityweight=True.
+    Higher quality = protected from collapse.
+
+    PyMeshLab 2025.7's Python API does not expose a setter for the main
+    vertex-scalar (quality) array.  We work around this via a PLY round-trip:
+
+      1. Save the current mesh as an ASCII PLY  (no vertex colors).
+      2. Inject vertex-color properties that encode importance as grey-scale
+         (R=G=B=importance*255, A=255).
+      3. Reload the edited PLY, replacing the original mesh in *ms*.
+      4. Derive the quality field from the colour channel: q = (r+g+b)/(3*255).
+
+    Returns True if the injection succeeded, False if decimation will run
+    without the quality scalar.
+    """
+    n_verts = ms.current_mesh().vertex_number()
+    if len(importance) != n_verts:
+        logger.warning(
+            "Importance length %d ≠ vertex count %d", len(importance), n_verts
+        )
+        return False
+
+    # High importance → high quality → protected from collapse
+    # (qualityweight penalises LOW quality, making those edges more
+    #  likely to collapse, so we pass importance directly).
+    quality = np.clip(importance.astype(np.float64), 0.0, 1.0)
+
+    colour_byte = (quality * 255.0).astype(np.uint8)
+
+    # ── 1. Save current mesh as ASCII PLY (no colours) ────────────
+    fd_plain, path_plain = tempfile.mkstemp(suffix=".ply")
+    os.close(fd_plain)
+    fd_colour, path_colour = tempfile.mkstemp(suffix="_clr.ply")
+    os.close(fd_colour)
+
+    try:
+        ms.save_current_mesh(path_plain, binary=False, save_vertex_color=False)
+
+        # ── 2. Read + modify PLY ──────────────────────────────────
+        with open(path_plain, encoding="ascii") as f:
+            content = f.read()
+        lines = content.rstrip("\n").split("\n")
+
+        header_end = -1
+        for i, line in enumerate(lines):
+            if line == "end_header":
+                header_end = i
+                break
+        if header_end == -1:
+            return False
+
+        num_vertices = 0
+        for line in lines[:header_end]:
+            if line.startswith("element vertex"):
+                num_vertices = int(line.split()[-1])
+                break
+
+        if num_vertices != n_verts:
+            return False
+
+        # Build new header with vertex-color properties.
+        # Insert colour properties just BEFORE `element face`.
+        new_lines: list[str] = []
+        for line in lines:
+            if line.startswith("element face"):
+                new_lines.extend([
+                    "property uchar red",
+                    "property uchar green",
+                    "property uchar blue",
+                    "property uchar alpha",
+                ])
+            new_lines.append(line)
+
+        shift = 4
+        new_header_end = header_end + shift
+
+        # Inject colour values into vertex-data lines.
+        # Original vertex lines have form: x y z quality
+        # We append 4 colour values, overwriting the line.
+        for v_idx in range(num_vertices):
+            orig_idx = header_end + 1 + v_idx
+            new_idx = new_header_end + 1 + v_idx
+            coords = lines[orig_idx].strip()
+            c = int(colour_byte[v_idx])
+            new_lines[new_idx] = f"{coords} {c} {c} {c} 255"
+
+        with open(path_colour, "w", encoding="ascii") as f:
+            f.write("\n".join(new_lines) + "\n")
+
+        # ── 3. Load colour PLY into the SAME MeshSet ─────────────
+        old_id = ms.current_mesh_id()
+        ms.load_new_mesh(path_colour)            # becomes current
+
+        # ── 4. Derive quality (= scalar) from RGB ────────────────
+        ms.apply_filter(
+            "compute_scalar_by_function_per_vertex",
+            q="(r+g+b)/(3*255)",
+            normalize=False,
+        )
+
+        # ── 5. Delete the original (uncoloured) mesh ─────────────
+        ms.set_current_mesh(old_id)
+        ms.delete_current_mesh()
+
+        return True
+
+    except Exception as exc:
+        logger.warning("Importance injection failed: %s. Falling back to plain QEM.", exc)
+        return False
+
+    finally:
+        for p in (path_plain, path_colour):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
 
 
 def _decimate_component(
@@ -214,17 +366,52 @@ def _decimate_component(
     target_faces: int,
     preserve_normals: bool,
     preserve_boundaries: bool,
+    use_importance: bool = True,
 ) -> trimesh.Trimesh | None:
     """
-    Run QEM on a single Trimesh component.
-    Returns decimated Trimesh, or None if something went wrong.
+    Run QEM decimation on a single Trimesh component.
+
+    When *use_importance* is True the importance map is computed and
+    injected into the mesh's quality field, and ``qualityweight=True``
+    causes the decimation to preferentially collapse low-importance
+    edges.
     """
+    logger.info("Trimesh before conversion: %d", len(mesh.vertices))
+
     ms = _component_to_pymeshlab(mesh)
+    logger.info("PyMeshLab after load: %d", ms.current_mesh().vertex_number())
+
     _apply_structure_preclean(ms)
+    pml_verts = ms.current_mesh().vertex_number()
+    logger.info("PyMeshLab after preclean: %d", pml_verts)
 
     current_faces = ms.current_mesh().face_number()
-    if target_faces < current_faces:
-        _apply_decimation(ms, target_faces, preserve_normals, preserve_boundaries)
+    if target_faces >= current_faces:
+        return _pymeshlab_to_trimesh(ms)
+
+    # ── Compute importance AFTER PyMeshLab processing so vertex counts match ──
+    importance: np.ndarray | None = None
+    if use_importance:
+        pml_mesh = ms.current_mesh()
+        verts = np.asarray(pml_mesh.vertex_matrix(), dtype=np.float64)
+        faces = np.asarray(pml_mesh.face_matrix(), dtype=np.int64)
+        tmp_trimesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+        importance = compute_importance(tmp_trimesh)
+        logger.info("Importance array: %d", len(importance))
+        assert len(importance) == pml_verts, (
+            f"Importance len {len(importance)} != vertex count {pml_verts}"
+        )
+
+    if importance is not None:
+        injection_ok = _inject_importance_as_quality(ms, importance)
+        logger.info("Injection success: %s", injection_ok)
+
+    _apply_decimation(
+        ms=ms,
+        target_faces=target_faces,
+        preserve_normals=preserve_normals,
+        preserve_boundaries=preserve_boundaries,
+    )
 
     return _pymeshlab_to_trimesh(ms)
 
@@ -234,9 +421,11 @@ def _decimate_all_components(
     target_faces: int,
     preserve_normals: bool,
     preserve_boundaries: bool,
+    use_importance: bool = True,
 ) -> trimesh.Trimesh:
     """
-    Decimate each component proportionally, then merge back into one mesh.
+    Decimate each component proportionally with importance weighting,
+    then merge back into one mesh.
     """
     total_faces = sum(len(c.faces) for c in components)
     output_parts: list[trimesh.Trimesh] = []
@@ -245,7 +434,6 @@ def _decimate_all_components(
         if len(component.faces) == 0:
             continue
 
-        # Give each component a face budget proportional to its share of total geometry
         ratio = len(component.faces) / total_faces if total_faces > 0 else 1.0
         component_target = max(4, int(target_faces * ratio))
 
@@ -254,6 +442,7 @@ def _decimate_all_components(
             target_faces=component_target,
             preserve_normals=preserve_normals,
             preserve_boundaries=preserve_boundaries,
+            use_importance=use_importance,
         )
         if result is not None:
             output_parts.append(result)
@@ -389,6 +578,7 @@ def decimate_mesh(
     strict_quality: bool = True,
     max_deviation_percent: float = 2.0,
     max_target_overshoot_percent: float = 12.0,
+    use_importance: bool = True,       # v1.1: importance-weighted QEM
 ) -> tuple[MeshStats, dict]:
     input_path = str(input_path)
     output_path = str(output_path)
@@ -438,6 +628,7 @@ def decimate_mesh(
             target_faces=candidate_target,
             preserve_normals=preserve_normals,
             preserve_boundaries=preserve_boundaries,
+            use_importance=use_importance,
         )
 
         result.export(output_path)
