@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import time as _time
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +30,79 @@ logger = logging.getLogger(__name__)
 
 from ..models.schemas import MeshStats, LODResult
 from .importance_mapper import compute_importance
+
+
+# ---------------------------------------------------------------------------
+# Timing instrumentation (temporary — left in place for profiling)
+# ---------------------------------------------------------------------------
+
+_TIMING: dict[str, float] = {}
+_TIMING_COUNT: dict[str, int] = {}
+
+
+class _t:
+    """Context manager that records elapsed seconds into ``_TIMING``."""
+    __slots__ = ('label', '_t0')
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+    def __enter__(self) -> None:
+        self._t0 = _time.perf_counter()
+
+    def __exit__(self, *args: object) -> None:
+        dt = _time.perf_counter() - self._t0
+        _TIMING[self.label] = _TIMING.get(self.label, 0.0) + dt
+        _TIMING_COUNT[self.label] = _TIMING_COUNT.get(self.label, 0) + 1
+
+
+def _timing_reset() -> None:
+    _TIMING.clear()
+    _TIMING_COUNT.clear()
+
+
+def _timing_report() -> None:
+    """Print the full timing report to stdout."""
+    from .importance_mapper import TIMING as _IMP_T, TIMING_COUNT as _IMP_C
+
+    # Merge importance_mapper timing into the local dict
+    for k, v in _IMP_T.items():
+        _TIMING.setdefault(k, 0.0)
+        _TIMING[k] += v
+        _TIMING_COUNT.setdefault(k, 0)
+        _TIMING_COUNT[k] += _IMP_C.get(k, 0)
+
+    _SEC_TO_MS = 1000.0
+
+    # Display order
+    top_level = ["Mesh loading", "Component extraction",
+                 "Scene reconstruction", "Export"]
+    per_comp   = ["Adjacency build", "Curvature", "Normal variation",
+                  "Boundary detection", "Feature density",
+                  "Normalization", "Laplacian smoothing",
+                  "Quality injection", "QEM decimation"]
+
+    lines: list[str] = []
+    lines.append("")
+    lines.append("=== TIMING REPORT ===")
+
+    for label in top_level:
+        total_s = _TIMING.get(label, 0.0)
+        lines.append(f"{label:<25s} {total_s * _SEC_TO_MS:>12.1f} ms")
+
+    lines.append("Per-component (avg / total):")
+    for label in per_comp:
+        total_s = _TIMING.get(label, 0.0)
+        count   = _TIMING_COUNT.get(label, 0)
+        avg_ms  = (total_s / count * _SEC_TO_MS) if count else 0.0
+        lines.append(
+            f"  {label:<23s} {avg_ms:>8.2f} ms / {total_s:>6.3f} s"
+        )
+
+    total_all = sum(_TIMING.values())
+    lines.append(f"Total:{'':>20s} {total_all:>8.3f} s")
+    lines.append("=====================")
+    print("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -66,40 +140,37 @@ def _load_components(path: str | Path) -> list[trimesh.Trimesh]:
 
     Always returns at least one component or raises ValueError.
     """
-    loaded = trimesh.load(str(path), process=False)
+    with _t("Mesh loading"):
+        loaded = trimesh.load(str(path), process=False)
 
     meshes: list[trimesh.Trimesh] = []
 
-    if isinstance(loaded, trimesh.Scene):
-        for node_name in loaded.graph.nodes_geometry:
-            val = loaded.graph[node_name]
-            transform = val[0]
-            geom_name = val[1] if len(val) >= 2 else node_name
-            geom = loaded.geometry.get(geom_name)
-            if not isinstance(geom, trimesh.Trimesh) or len(geom.faces) == 0:
-                continue
-            # Apply the node's scene-graph transform to bring the mesh into
-            # world-space so all components share a common coordinate frame
-            # before optimisation.
-            verts = trimesh.transformations.transform_points(
-                geom.vertices.copy(), transform
-            )
-            transformed = trimesh.Trimesh(
-                vertices=verts,
-                faces=geom.faces.copy(),
-                process=False,
-            )
-            meshes.append(transformed)
+    with _t("Component extraction"):
+        if isinstance(loaded, trimesh.Scene):
+            for node_name in loaded.graph.nodes_geometry:
+                val = loaded.graph[node_name]
+                transform = val[0]
+                geom_name = val[1] if len(val) >= 2 else node_name
+                geom = loaded.geometry.get(geom_name)
+                if not isinstance(geom, trimesh.Trimesh) or len(geom.faces) == 0:
+                    continue
+                verts = trimesh.transformations.transform_points(
+                    geom.vertices.copy(), transform
+                )
+                transformed = trimesh.Trimesh(
+                    vertices=verts,
+                    faces=geom.faces.copy(),
+                    process=False,
+                )
+                meshes.append(transformed)
 
-    elif isinstance(loaded, trimesh.Trimesh):
-        # Split into disconnected bodies so QEM never sees unrelated geometry
-        # merged into a single vertex soup.
-        parts = loaded.split(only_watertight=False)
-        for p in parts:
-            if isinstance(p, trimesh.Trimesh) and len(p.faces) > 0:
-                meshes.append(p)
-        if not meshes and len(loaded.faces) > 0:
-            meshes.append(loaded)
+        elif isinstance(loaded, trimesh.Trimesh):
+            parts = loaded.split(only_watertight=False)
+            for p in parts:
+                if isinstance(p, trimesh.Trimesh) and len(p.faces) > 0:
+                    meshes.append(p)
+            if not meshes and len(loaded.faces) > 0:
+                meshes.append(loaded)
 
     if not meshes:
         raise ValueError(f"No usable mesh geometry found in: {path}")
@@ -367,6 +438,8 @@ def _decimate_component(
     preserve_normals: bool,
     preserve_boundaries: bool,
     use_importance: bool = True,
+    precomputed_importance: np.ndarray | None = None,
+    cache: dict[int, np.ndarray] | None = None,
 ) -> trimesh.Trimesh | None:
     """
     Run QEM decimation on a single Trimesh component.
@@ -375,6 +448,15 @@ def _decimate_component(
     injected into the mesh's quality field, and ``qualityweight=True``
     causes the decimation to preferentially collapse low-importance
     edges.
+
+    If *precomputed_importance* is provided and its length matches the
+    vertex count after PyMeshLab preclean, it is used directly —
+    skipping the expensive ``compute_importance()`` call.
+
+    If *cache* is provided, importance computed on the post-preclean
+    mesh is stored keyed by ``id(mesh)``, so subsequent retries that
+    pass the same component object hit the cache regardless of whether
+    *precomputed_importance* matched.
     """
     logger.info("Trimesh before conversion: %d", len(mesh.vertices))
 
@@ -389,31 +471,49 @@ def _decimate_component(
     if target_faces >= current_faces:
         return _pymeshlab_to_trimesh(ms)
 
-    # ── Compute importance AFTER PyMeshLab processing so vertex counts match ──
+    # ── Resolve importance: cache → precomputed → fresh compute ──
     importance: np.ndarray | None = None
     if use_importance:
-        pml_mesh = ms.current_mesh()
-        verts = np.asarray(pml_mesh.vertex_matrix(), dtype=np.float64)
-        faces = np.asarray(pml_mesh.face_matrix(), dtype=np.int64)
-        tmp_trimesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
-        importance = compute_importance(tmp_trimesh)
-        logger.info("Importance array: %d", len(importance))
-        assert len(importance) == pml_verts, (
-            f"Importance len {len(importance)} != vertex count {pml_verts}"
-        )
+        cache_key = id(mesh)
+        if cache is not None and cache_key in cache:
+            importance = cache[cache_key]
+            logger.info("Using inter-retry cached importance (%d)", len(importance))
+        elif (
+            precomputed_importance is not None
+            and len(precomputed_importance) == pml_verts
+        ):
+            importance = precomputed_importance
+            logger.info("Using precomputed importance (%d)", len(importance))
+        else:
+            pml_mesh = ms.current_mesh()
+            verts = np.asarray(pml_mesh.vertex_matrix(), dtype=np.float64)
+            faces = np.asarray(pml_mesh.face_matrix(), dtype=np.int64)
+            tmp_trimesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+            importance = compute_importance(tmp_trimesh)
+            logger.info("Importance array: %d", len(importance))
+            assert len(importance) == pml_verts, (
+                f"Importance len {len(importance)} != vertex count {pml_verts}"
+            )
+            if cache is not None:
+                cache[cache_key] = importance
+                logger.info("Stored in inter-retry cache (%d)", len(importance))
 
     if importance is not None:
-        injection_ok = _inject_importance_as_quality(ms, importance)
+        with _t("Quality injection"):
+            injection_ok = _inject_importance_as_quality(ms, importance)
         logger.info("Injection success: %s", injection_ok)
 
-    _apply_decimation(
-        ms=ms,
-        target_faces=target_faces,
-        preserve_normals=preserve_normals,
-        preserve_boundaries=preserve_boundaries,
-    )
+    with _t("QEM decimation"):
+        _apply_decimation(
+            ms=ms,
+            target_faces=target_faces,
+            preserve_normals=preserve_normals,
+            preserve_boundaries=preserve_boundaries,
+        )
 
-    return _pymeshlab_to_trimesh(ms)
+    with _t("Scene reconstruction"):
+        result = _pymeshlab_to_trimesh(ms)
+    return result
 
 
 def _decimate_all_components(
@@ -422,20 +522,35 @@ def _decimate_all_components(
     preserve_normals: bool,
     preserve_boundaries: bool,
     use_importance: bool = True,
+    component_importance: list[np.ndarray] | None = None,
+    cache: dict[int, np.ndarray] | None = None,
 ) -> trimesh.Trimesh:
     """
     Decimate each component proportionally with importance weighting,
     then merge back into one mesh.
+
+    If *component_importance* is provided it must be the same length as
+    *components*; each entry is the precomputed importance array for the
+    corresponding component.
+
+    If *cache* is provided it is forwarded to ``_decimate_component``
+    for inter-retry importance caching.
     """
     total_faces = sum(len(c.faces) for c in components)
     output_parts: list[trimesh.Trimesh] = []
 
-    for component in components:
+    for idx, component in enumerate(components):
         if len(component.faces) == 0:
             continue
 
         ratio = len(component.faces) / total_faces if total_faces > 0 else 1.0
         component_target = max(4, int(target_faces * ratio))
+
+        precomputed = (
+            component_importance[idx]
+            if component_importance is not None and idx < len(component_importance)
+            else None
+        )
 
         result = _decimate_component(
             mesh=component,
@@ -443,6 +558,8 @@ def _decimate_all_components(
             preserve_normals=preserve_normals,
             preserve_boundaries=preserve_boundaries,
             use_importance=use_importance,
+            precomputed_importance=precomputed,
+            cache=cache,
         )
         if result is not None:
             output_parts.append(result)
@@ -583,6 +700,8 @@ def decimate_mesh(
     input_path = str(input_path)
     output_path = str(output_path)
 
+    _timing_reset()
+
     # ── 1. Load all components ──────────────────────────────────────────────
     components = _load_components(input_path)
     total_faces = sum(len(c.faces) for c in components)
@@ -591,8 +710,10 @@ def decimate_mesh(
     if total_faces <= 4 or target_faces >= total_faces:
         combined = (trimesh.util.concatenate(components)
                     if len(components) > 1 else components[0])
-        combined.export(output_path)
+        with _t("Export"):
+            combined.export(output_path)
         stats = _stats_from_trimesh(combined, output_path)
+        _timing_report()
         return stats, {
             "target_faces_used": total_faces,
             "quality_deviation_percent": 0.0,
@@ -602,10 +723,23 @@ def decimate_mesh(
 
     requested_target = int(max(4, min(target_faces, total_faces - 1)))
 
-    # ── 3. Build quality reference from original components ────────────────
+    # ── 3. Precompute importance once per component (cached for retries) ──
+    component_importance: list[np.ndarray] | None = None
+    if use_importance:
+        component_importance = []
+        for c in components:
+            if len(c.faces) == 0:
+                component_importance.append(np.array([], dtype=np.float64))
+            else:
+                component_importance.append(compute_importance(c))
+
+    # ── 4. Inter-retry importance cache (post-preclean, keyed by id) ────
+    _importance_cache: dict[int, np.ndarray] = {}
+
+    # ── 5. Build quality reference from original components ────────────────
     quality_ref = _build_quality_reference(components) if strict_quality else None
 
-    # ── 4. Build candidate targets for quality-guard retry loop ───────────
+    # ── 6. Build candidate targets for quality-guard retry loop ───────────
     candidate_targets = (
         _build_target_candidates(
             current_faces=total_faces,
@@ -621,7 +755,7 @@ def decimate_mesh(
     last_target = requested_target
     last_result: trimesh.Trimesh | None = None
 
-    # ── 5. Retry loop — tighten target until quality guard is satisfied ────
+    # ── 7. Retry loop — tighten target until quality guard is satisfied ────
     for candidate_target in candidate_targets:
         result = _decimate_all_components(
             components=components,
@@ -629,9 +763,12 @@ def decimate_mesh(
             preserve_normals=preserve_normals,
             preserve_boundaries=preserve_boundaries,
             use_importance=use_importance,
+            component_importance=component_importance,
+            cache=_importance_cache,
         )
 
-        result.export(output_path)
+        with _t("Export"):
+            result.export(output_path)
         stats = _stats_from_trimesh(result, output_path)
         deviation = _surface_deviation_percent(quality_ref, result) if quality_ref else None
 
@@ -644,6 +781,7 @@ def decimate_mesh(
             break
 
         if deviation is not None and deviation <= max_deviation_percent:
+            _timing_report()
             return stats, {
                 "target_faces_used": stats.face_count,
                 "quality_deviation_percent": deviation,
@@ -658,6 +796,7 @@ def decimate_mesh(
     if strict_quality and quality_ref is not None and last_deviation is not None:
         quality_guard_satisfied = last_deviation <= max_deviation_percent
 
+    _timing_report()
     return last_stats, {
         "target_faces_used": last_stats.face_count,
         "quality_deviation_percent": last_deviation,
@@ -693,6 +832,18 @@ def generate_lods(
     components = _load_components(input_path)
     total_faces = sum(len(c.faces) for c in components)
 
+    # Precompute importance once for all LOD levels
+    component_importance: list[np.ndarray] | None = None
+    if any(ratio < 1.0 for ratio in lod_ratios.values()):
+        component_importance = []
+        for c in components:
+            if len(c.faces) == 0:
+                component_importance.append(np.array([], dtype=np.float64))
+            else:
+                component_importance.append(compute_importance(c))
+
+    # Inter-retry cache shared across LOD levels
+    _importance_cache: dict[int, np.ndarray] = {}
     results: list[LODResult] = []
 
     for level, ratio in lod_ratios.items():
@@ -711,6 +862,8 @@ def generate_lods(
                 target_faces=target,
                 preserve_normals=preserve_normals,
                 preserve_boundaries=preserve_boundaries,
+                component_importance=component_importance,
+                cache=_importance_cache,
             )
             result_mesh.export(str(output_file))
 

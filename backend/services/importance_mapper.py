@@ -33,9 +33,38 @@ Weights (tunable):
 
 from __future__ import annotations
 
+import time as _time
+
 import numpy as np
 import trimesh
 import trimesh.graph
+
+from .importance.curvature import compute_curvature_importance
+from .importance.config import CURVATURE_MODE
+
+
+# ---------------------------------------------------------------------------
+# Timing instrumentation (shared with mesh_optimizer via import)
+# ---------------------------------------------------------------------------
+
+TIMING: dict[str, float] = {}
+TIMING_COUNT: dict[str, int] = {}
+
+
+class _t:
+    """Context manager that records elapsed seconds into ``TIMING``."""
+    __slots__ = ('label', '_t0')
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+    def __enter__(self) -> None:
+        self._t0 = _time.perf_counter()
+
+    def __exit__(self, *args: object) -> None:
+        dt = _time.perf_counter() - self._t0
+        TIMING[self.label] = TIMING.get(self.label, 0.0) + dt
+        TIMING_COUNT[self.label] = TIMING_COUNT.get(self.label, 0) + 1
 
 
 # ---------------------------------------------------------------------------
@@ -271,19 +300,25 @@ def compute_importance(mesh: trimesh.Trimesh) -> np.ndarray:
         return np.full(n_verts, 0.5, dtype=np.float64)
 
     try:
-        radius = _adaptive_radius(mesh)
-
         # ── Compute each cue ──────────────────────────────────────────────
-        curvature        = _mean_curvature(mesh, radius)
-        normal_var       = _normal_variation(mesh)
-        boundary         = _boundary_importance(mesh)
-        feature_dens     = _feature_density(mesh)
+        with _t("Curvature"):
+            curvature = compute_curvature_importance(mesh)
+        with _t("Normal variation"):
+            if CURVATURE_MODE == "fast":
+                normal_var = curvature
+            else:
+                normal_var = _normal_variation(mesh)
+        with _t("Boundary detection"):
+            boundary = _boundary_importance(mesh)
+        with _t("Feature density"):
+            feature_dens = _feature_density(mesh)
 
         # ── Percentile-normalize each cue independently ───────────────────
-        curvature    = _percentile_normalize(curvature)
-        normal_var   = _percentile_normalize(normal_var)
-        boundary     = _percentile_normalize(boundary)
-        feature_dens = _percentile_normalize(feature_dens)
+        with _t("Normalization"):
+            curvature    = _percentile_normalize(curvature)
+            normal_var   = _percentile_normalize(normal_var)
+            boundary     = _percentile_normalize(boundary)
+            feature_dens = _percentile_normalize(feature_dens)
 
         # ── Weighted combination ──────────────────────────────────────────
         importance = (
@@ -294,11 +329,14 @@ def compute_importance(mesh: trimesh.Trimesh) -> np.ndarray:
         )
 
         # ── Laplacian smoothing — removes noisy spikes ────────────────────
-        adjacency  = _build_adjacency(mesh)
-        importance = _laplacian_smooth(importance, adjacency)
+        with _t("Adjacency build"):
+            adjacency = _build_adjacency(mesh)
+        with _t("Laplacian smoothing"):
+            importance = _laplacian_smooth(importance, adjacency)
 
         # ── Final normalization to [0, 1] ─────────────────────────────────
-        importance = _percentile_normalize(importance)
+        with _t("Normalization"):
+            importance = _percentile_normalize(importance)
 
         return importance.astype(np.float64)
 
