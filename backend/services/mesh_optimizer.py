@@ -719,19 +719,24 @@ def decimate_mesh(
             "quality_deviation_percent": 0.0,
             "quality_guard_relaxed": False,
             "quality_guard_satisfied": True,
+            "importance_scores": importance_scores,
         }
 
     requested_target = int(max(4, min(target_faces, total_faces - 1)))
 
     # ── 3. Precompute importance once per component (cached for retries) ──
     component_importance: list[np.ndarray] | None = None
+    flat_importance: list[float] = []
     if use_importance:
         component_importance = []
         for c in components:
             if len(c.faces) == 0:
                 component_importance.append(np.array([], dtype=np.float64))
             else:
-                component_importance.append(compute_importance(c))
+                imp = compute_importance(c)
+                component_importance.append(imp)
+                flat_importance.extend(imp.tolist())
+    importance_scores = flat_importance if flat_importance else None
 
     # ── 4. Inter-retry importance cache (post-preclean, keyed by id) ────
     _importance_cache: dict[int, np.ndarray] = {}
@@ -787,6 +792,7 @@ def decimate_mesh(
                 "quality_deviation_percent": deviation,
                 "quality_guard_relaxed": candidate_target != requested_target,
                 "quality_guard_satisfied": True,
+                "importance_scores": importance_scores,
             }
 
     if last_stats is None:
@@ -802,6 +808,7 @@ def decimate_mesh(
         "quality_deviation_percent": last_deviation,
         "quality_guard_relaxed": last_target != requested_target,
         "quality_guard_satisfied": quality_guard_satisfied,
+        "importance_scores": importance_scores,
     }
 
 

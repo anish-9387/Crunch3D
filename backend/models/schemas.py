@@ -65,6 +65,7 @@ class OptimizeResponse(BaseModel):
     lods: Optional[list[LODResult]] = None
     reduction_percent: float
     processing_time_seconds: float
+    has_importance_map: bool = False
     message: str
 
 
