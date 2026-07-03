@@ -103,3 +103,8 @@ export async function getOptimizationRecommendation(jobId, fromLatest = false) {
   });
   return response.data;
 }
+
+export async function getImportanceMap(jobId) {
+  const response = await api.get(`/importance/${jobId}`);
+  return response.data;
+}

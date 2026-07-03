@@ -3,8 +3,10 @@ import time
 import zipfile
 import io
 from pathlib import Path
+from typing import Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
 
 from ..models.schemas import (
     UploadResponse, OptimizeRequest, OptimizeResponse, JobStatus,
@@ -334,6 +336,9 @@ async def optimize_mesh(request: OptimizeRequest):
         jobs[request.job_id]["reduction_percent"] = reduction
         jobs[request.job_id]["processing_time_seconds"] = processing_time
         jobs[request.job_id]["source_reason"] = source_reason
+        jobs[request.job_id]["has_importance_map"] = quality_meta.get("importance_scores") is not None
+        if quality_meta.get("importance_scores") is not None:
+            jobs[request.job_id]["importance_scores"] = quality_meta["importance_scores"]
         _save_job(request.job_id)
 
         record_optimization_event(
@@ -382,6 +387,7 @@ async def optimize_mesh(request: OptimizeRequest):
             lods=lod_results,
             reduction_percent=reduction,
             processing_time_seconds=processing_time,
+            has_importance_map=quality_meta.get("importance_scores") is not None,
             message=message,
         )
 
@@ -490,6 +496,20 @@ async def get_job_status(job_id: str):
         stage=job.get("stage"),
         error=job.get("error"),
     )
+
+
+class ImportanceResponse(BaseModel):
+    scores: list[float]
+    vertex_count: int
+
+
+@router.get("/importance/{job_id}", response_model=ImportanceResponse)
+async def get_importance_map(job_id: str):
+    job = _get_job(job_id)
+    scores = job.get("importance_scores")
+    if scores is None:
+        raise HTTPException(404, "No importance map available for this job")
+    return ImportanceResponse(scores=scores, vertex_count=len(scores))
 
 
 @router.get("/download/{job_id}")

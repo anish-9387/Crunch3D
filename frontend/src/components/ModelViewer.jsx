@@ -7,6 +7,29 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js'
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import ModelInspector from './ModelInspector'
+import { getImportanceMap } from '../api/client'
+
+function importanceToColor(t) {
+  const stops = [
+    [0.0, 0.0, 1.0],
+    [0.0, 1.0, 1.0],
+    [0.0, 1.0, 0.0],
+    [1.0, 1.0, 0.0],
+    [1.0, 0.0, 0.0],
+  ]
+  const positions = [0.0, 0.25, 0.50, 0.75, 1.0]
+  let i = 0
+  while (i < positions.length - 1 && t > positions[i + 1]) i++
+  if (i >= positions.length - 1) return stops[stops.length - 1]
+  const lo = positions[i], hi = positions[i + 1]
+  const alpha = (t - lo) / (hi - lo)
+  const c0 = stops[i], c1 = stops[i + 1]
+  return [
+    c0[0] * (1 - alpha) + c1[0] * alpha,
+    c0[1] * (1 - alpha) + c1[1] * alpha,
+    c0[2] * (1 - alpha) + c1[2] * alpha,
+  ]
+}
 
 function collectModelSummary(rootObject) {
   if (!rootObject) return null
@@ -120,7 +143,7 @@ function CameraReporter({ onCameraChange }) {
   return null
 }
 
-function MeshFromUrl({ url, filename, wireframe, onModelReady, onModelError, viewerName }) {
+function MeshFromUrl({ url, filename, wireframe, importanceEnabled, importanceScores, onModelReady, onModelError, viewerName }) {
   const [object, setObject] = useState(null)
 
   useEffect(() => {
@@ -190,18 +213,26 @@ function MeshFromUrl({ url, filename, wireframe, onModelReady, onModelError, vie
     }
   }, [url, filename, onModelReady, onModelError])
 
-  const material = useMemo(
-    () =>
-      new THREE.MeshStandardMaterial({
-        color: '#d4d4d4',
-        wireframe,
-        flatShading: !wireframe,
-        side: THREE.DoubleSide,
-        roughness: 0.78,
+  const material = useMemo(() => {
+    if (importanceEnabled && importanceScores) {
+      return new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        color: 0xffffff,
+        roughness: 0.8,
         metalness: 0.05,
-      }),
-    [wireframe]
-  )
+        wireframe,
+        side: THREE.DoubleSide,
+      })
+    }
+    return new THREE.MeshStandardMaterial({
+      color: '#d4d4d4',
+      wireframe,
+      flatShading: !wireframe,
+      side: THREE.DoubleSide,
+      roughness: 0.78,
+      metalness: 0.05,
+    })
+  }, [wireframe, importanceEnabled, importanceScores])
 
   useEffect(() => {
     if (!object) return
@@ -211,6 +242,63 @@ function MeshFromUrl({ url, filename, wireframe, onModelReady, onModelError, vie
       }
     })
   }, [object, material])
+
+  useEffect(() => {
+    if (!object || !importanceEnabled || !importanceScores) return
+
+    let vertexOffset = 0
+    object.traverse((child) => {
+      if (!child.isMesh || !child.geometry) return
+      const pos = child.geometry.getAttribute('position')
+      if (!pos) return
+
+      const vertCount = pos.count
+      const sliceEnd = vertexOffset + vertCount
+
+      if (sliceEnd > importanceScores.length) {
+        console.warn(
+          `[Importance] Slice [${vertexOffset}, ${sliceEnd}) exceeds score array length ${importanceScores.length}`
+        )
+        return
+      }
+
+      const meshScores = importanceScores.slice(vertexOffset, sliceEnd)
+      const colors = new Float32Array(vertCount * 3)
+      for (let i = 0; i < vertCount; i++) {
+        const [r, g, b] = importanceToColor(meshScores[i])
+        colors[i * 3 + 0] = r
+        colors[i * 3 + 1] = g
+        colors[i * 3 + 2] = b
+      }
+      child.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+      child.geometry.attributes.color.needsUpdate = true
+      child.material = new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        color: 0xffffff,
+        roughness: 0.78,
+        metalness: 0.05,
+        side: THREE.DoubleSide,
+        flatShading: false,
+      })
+
+      vertexOffset += vertCount
+    })
+
+    if (vertexOffset !== importanceScores.length) {
+      console.warn(
+        `[Importance] Vertex mismatch: consumed ${vertexOffset} vertices but received ${importanceScores.length} importance scores.`
+      )
+    }
+  }, [object, importanceEnabled, importanceScores])
+
+  useEffect(() => {
+    if (!object || importanceEnabled) return
+    object.traverse((child) => {
+      if (child.isMesh && child.geometry) {
+        child.geometry.deleteAttribute('color')
+      }
+    })
+  }, [object, importanceEnabled])
 
   useEffect(() => {
     return () => {
@@ -227,7 +315,7 @@ function MeshFromUrl({ url, filename, wireframe, onModelReady, onModelError, vie
   )
 }
 
-function Scene({ url, filename, wireframe, onModelReady, onModelError, onCameraChange, performanceMode, viewerName }) {
+function Scene({ url, filename, wireframe, importanceEnabled, importanceScores, onModelReady, onModelError, onCameraChange, performanceMode, viewerName }) {
   return (
     <>
       <ambientLight intensity={0.7} />
@@ -239,6 +327,8 @@ function Scene({ url, filename, wireframe, onModelReady, onModelError, onCameraC
             url={url}
             filename={filename}
             wireframe={wireframe}
+            importanceEnabled={importanceEnabled}
+            importanceScores={importanceScores}
             onModelReady={onModelReady}
             onModelError={onModelError}
             viewerName={viewerName}
@@ -265,6 +355,41 @@ function Scene({ url, filename, wireframe, onModelReady, onModelError, onCameraC
   )
 }
 
+function ImportanceLegend() {
+  const items = [
+    { label: 'Protected', color: '#ff0000' },
+    { label: 'High', color: '#ffff00' },
+    { label: 'Medium', color: '#00ff00' },
+    { label: 'Low', color: '#0000ff' },
+  ]
+  return (
+    <div style={{
+      position: 'absolute',
+      bottom: 12,
+      right: 12,
+      background: 'rgba(0,0,0,0.65)',
+      borderRadius: 8,
+      padding: '8px 14px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 4,
+      fontSize: 12,
+      fontFamily: 'monospace',
+      color: '#eee',
+      pointerEvents: 'none',
+      zIndex: 10,
+    }}>
+      <div style={{ fontWeight: 700, marginBottom: 2, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>Importance</div>
+      {items.map((item) => (
+        <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: 3, background: item.color }} />
+          <span>{item.label}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function ModelViewer({
   originalUrl,
   optimizedUrl,
@@ -276,19 +401,42 @@ export default function ModelViewer({
   processing,
   stage,
   performanceMode,
+  hasImportanceMap,
+  jobId,
 }) {
   const [wireframe, setWireframe] = useState(false)
   const [splitView, setSplitView] = useState(false)
+  const [importanceEnabled, setImportanceEnabled] = useState(false)
+  const [importanceScores, setImportanceScores] = useState(null)
   const [modelSummary, setModelSummary] = useState(null)
   const [cameraInfo, setCameraInfo] = useState(null)
   const [viewerError, setViewerError] = useState(null)
   const cameraCacheRef = useRef({})
 
-  const showSplit = splitView && optimizedUrl
-  const activeFilename = optimizedUrl ? optimizedFilename : filename
-  const activeStats = optimizedUrl ? optimizedStats : originalStats
+  const canShowImportance = hasImportanceMap && !!originalUrl
 
-  const inspectorMode = showSplit ? 'Comparison' : optimizedUrl ? 'Optimized' : 'Original'
+  const showSplit = splitView && optimizedUrl
+
+  useEffect(() => {
+    if (!importanceEnabled || !jobId) {
+      setImportanceScores(null)
+      return
+    }
+    let cancelled = false
+    getImportanceMap(jobId).then((data) => {
+      if (cancelled) return
+      setImportanceScores(data.scores)
+    }).catch(() => {
+      if (!cancelled) setImportanceEnabled(false)
+    })
+    return () => { cancelled = true }
+  }, [importanceEnabled, jobId])
+
+  const showOriginal = importanceEnabled || !optimizedUrl
+  const activeFilename = importanceEnabled ? filename : (optimizedUrl ? optimizedFilename : filename)
+  const activeStats = importanceEnabled ? originalStats : (optimizedUrl ? optimizedStats : originalStats)
+
+  const inspectorMode = showSplit ? 'Comparison' : (showOriginal && !optimizedUrl ? 'Original' : importanceEnabled ? 'Original (Importance Map)' : 'Optimized')
 
   const handleCameraChange = useCallback((next) => {
     const rounded = {
@@ -351,11 +499,19 @@ export default function ModelViewer({
               Split View
             </button>
           )}
+          <button
+            className={`viewer-btn ${importanceEnabled ? 'active' : ''}`}
+            onClick={() => canShowImportance && setImportanceEnabled(!importanceEnabled)}
+            disabled={!canShowImportance}
+            title={!canShowImportance ? 'Run optimization first to generate importance map' : 'Toggle importance heatmap'}
+          >
+            Importance Map
+          </button>
         </div>
 
       {showSplit ? (
         <div className="viewer-split">
-          <div className="viewer-container">
+          <div className="viewer-container" style={{ position: 'relative' }}>
             <div className="viewer-label">Original</div>
             <Canvas
               camera={{ position: [3, 2, 3], fov: 50 }}
@@ -366,6 +522,8 @@ export default function ModelViewer({
                 url={originalUrl}
                 filename={filename}
                 wireframe={wireframe}
+                importanceEnabled={importanceEnabled}
+                importanceScores={importanceScores}
                 onModelReady={handleModelReady}
                 onModelError={handleModelError}
                 onCameraChange={handleCameraChange}
@@ -373,6 +531,7 @@ export default function ModelViewer({
                 viewerName="Original"
               />
             </Canvas>
+            {importanceEnabled && <ImportanceLegend />}
           </div>
           <div className="viewer-container">
             <div className="viewer-label">Optimized</div>
@@ -385,6 +544,8 @@ export default function ModelViewer({
                 url={optimizedUrl}
                 filename={optimizedFilename}
                 wireframe={wireframe}
+                importanceEnabled={false}
+                importanceScores={null}
                 onModelReady={handleModelReady}
                 onModelError={handleModelError}
                 onCameraChange={handleCameraChange}
@@ -394,7 +555,7 @@ export default function ModelViewer({
           </div>
         </div>
       ) : (
-        <div className="viewer-container">
+        <div className="viewer-container" style={{ position: 'relative' }}>
           {processing && (
             <div className="processing-overlay">
               <div className="spinner" />
@@ -402,7 +563,7 @@ export default function ModelViewer({
             </div>
           )}
           <div className="viewer-label">
-            {optimizedUrl && !splitView ? 'Optimized' : 'Original'}
+            {importanceEnabled ? 'Original (Importance Map)' : (optimizedUrl && !showOriginal ? 'Optimized' : 'Original')}
           </div>
           <Canvas
             camera={{ position: [3, 2, 3], fov: 50 }}
@@ -410,15 +571,18 @@ export default function ModelViewer({
             gl={{ antialias: !performanceMode, powerPreference: 'high-performance' }}
           >
             <Scene
-              url={optimizedUrl || originalUrl}
-              filename={optimizedUrl ? optimizedFilename : filename}
+              url={showOriginal ? originalUrl : optimizedUrl}
+              filename={showOriginal ? filename : optimizedFilename}
               wireframe={wireframe}
+              importanceEnabled={importanceEnabled && showOriginal}
+              importanceScores={importanceScores}
               onModelReady={handleModelReady}
               onModelError={handleModelError}
               onCameraChange={handleCameraChange}
               performanceMode={performanceMode}
-              viewerName={optimizedUrl ? 'Single-View (Optimized)' : 'Single-View (Original)'} />
+              viewerName={importanceEnabled ? 'Importance Map' : (optimizedUrl ? 'Optimized' : 'Original')} />
           </Canvas>
+          {importanceEnabled && <ImportanceLegend />}
         </div>
       )}
 

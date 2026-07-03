@@ -342,6 +342,8 @@ export default function DemoApp() {
                 processing={processing}
                 stage={stage}
                 performanceMode={performanceMode}
+                hasImportanceMap={!!optimizedStats}
+                jobId={jobId}
               />
 
               {error && <div className="error-msg">{error}</div>}
