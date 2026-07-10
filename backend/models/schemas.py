@@ -9,6 +9,7 @@ class MeshStats(BaseModel):
     file_size_mb: float
     has_uvs: bool
     has_normals: bool
+    has_animation: bool = False
     bounding_box: Optional[dict] = None
 
 
@@ -51,6 +52,13 @@ class LODResult(BaseModel):
     reduction_percent: float
 
 
+class TextureExportInfo(BaseModel):
+    texture_preserved: bool = True
+    texture_loss_reason: Optional[str] = None
+    export_mode_used: str = "full"
+    warnings: list[str] = []
+
+
 class OptimizeResponse(BaseModel):
     job_id: str
     original_stats: MeshStats
@@ -66,6 +74,10 @@ class OptimizeResponse(BaseModel):
     reduction_percent: float
     processing_time_seconds: float
     has_importance_map: bool = False
+    has_uv_density_map: bool = False
+    has_animation_map: bool = False
+    is_animated: bool = False
+    texture_export: Optional[TextureExportInfo] = None
     message: str
 
 

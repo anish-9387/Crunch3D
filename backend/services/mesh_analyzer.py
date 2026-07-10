@@ -22,6 +22,7 @@ import trimesh
 import trimesh.util
 
 from ..models.schemas import MeshStats
+from .importance.animation_awareness import has_animation_data
 
 
 # ---------------------------------------------------------------------------
@@ -151,5 +152,6 @@ def analyze_mesh(filepath: str | Path) -> MeshStats:
         file_size_mb=round(file_size / (1024 * 1024), 3),
         has_uvs=_has_uvs(components),
         has_normals=_has_normals(components),
+        has_animation=any(has_animation_data(c) for c in components),
         bounding_box=_bounding_box(components),
     )

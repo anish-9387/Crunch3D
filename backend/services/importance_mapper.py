@@ -16,6 +16,10 @@ Pipeline:
       ↓
     Compute Local Feature Density  (vertex valence proxy)
       ↓
+    Compute UV Density Importance  (texture-stretch risk, if UVs present)
+      ↓
+    Compute Animation Importance   (rig / deformation sensitivity)
+      ↓
     Weighted Combination
       ↓
     Percentile Normalization       (robust to outlier spikes)
@@ -25,10 +29,12 @@ Pipeline:
     Final importance map  [0.0, 1.0]
 
 Weights (tunable):
-    curvature        0.45
-    normal_variation 0.20
-    boundary         0.20
-    feature_density  0.15
+    curvature        0.35
+    normal_variation 0.15
+    boundary         0.15
+    feature_density  0.12
+    uv_density       0.13
+    animation        0.10
 """
 
 from __future__ import annotations
@@ -41,6 +47,8 @@ import trimesh.graph
 
 from .importance.curvature import compute_curvature_importance
 from .importance.config import CURVATURE_MODE
+from .importance.uv_density import compute_uv_density_importance, has_uvs
+from .importance.animation_awareness import compute_animation_importance
 
 
 # ---------------------------------------------------------------------------
@@ -81,10 +89,12 @@ NORMALIZATION_PERCENTILE = 95
 SMOOTH_ITERATIONS = 3
 
 # Combination weights — must sum to 1.0
-W_CURVATURE        = 0.45
-W_NORMAL_VARIATION = 0.20
-W_BOUNDARY         = 0.20
-W_FEATURE_DENSITY  = 0.15
+W_CURVATURE        = 0.35
+W_NORMAL_VARIATION = 0.15
+W_BOUNDARY         = 0.15
+W_FEATURE_DENSITY  = 0.12
+W_UV_DENSITY       = 0.13
+W_ANIMATION        = 0.10
 
 # Boundary bonus (kept conservative — scanned meshes have noisy boundaries)
 BOUNDARY_BONUS = 0.3
@@ -312,6 +322,10 @@ def compute_importance(mesh: trimesh.Trimesh) -> np.ndarray:
             boundary = _boundary_importance(mesh)
         with _t("Feature density"):
             feature_dens = _feature_density(mesh)
+        with _t("UV density"):
+            uv_density = compute_uv_density_importance(mesh)
+        with _t("Animation awareness"):
+            animation = compute_animation_importance(mesh)
 
         # ── Percentile-normalize each cue independently ───────────────────
         with _t("Normalization"):
@@ -319,13 +333,17 @@ def compute_importance(mesh: trimesh.Trimesh) -> np.ndarray:
             normal_var   = _percentile_normalize(normal_var)
             boundary     = _percentile_normalize(boundary)
             feature_dens = _percentile_normalize(feature_dens)
+            uv_density   = _percentile_normalize(uv_density)
+            animation    = _percentile_normalize(animation)
 
         # ── Weighted combination ──────────────────────────────────────────
         importance = (
             W_CURVATURE        * curvature    +
             W_NORMAL_VARIATION * normal_var   +
             W_BOUNDARY         * boundary     +
-            W_FEATURE_DENSITY  * feature_dens
+            W_FEATURE_DENSITY  * feature_dens +
+            W_UV_DENSITY       * uv_density   +
+            W_ANIMATION        * animation
         )
 
         # ── Laplacian smoothing — removes noisy spikes ────────────────────

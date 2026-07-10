@@ -339,6 +339,12 @@ async def optimize_mesh(request: OptimizeRequest):
         jobs[request.job_id]["has_importance_map"] = quality_meta.get("importance_scores") is not None
         if quality_meta.get("importance_scores") is not None:
             jobs[request.job_id]["importance_scores"] = quality_meta["importance_scores"]
+
+        texture_export_info = quality_meta.get("texture_export_info")
+        if texture_export_info is not None:
+            jobs[request.job_id]["texture_export"] = texture_export_info
+        jobs[request.job_id]["original_has_textures"] = quality_meta.get("original_has_textures", False)
+        jobs[request.job_id]["original_has_animation"] = quality_meta.get("original_has_animation", False)
         _save_job(request.job_id)
 
         record_optimization_event(
@@ -373,6 +379,17 @@ async def optimize_mesh(request: OptimizeRequest):
         elif source_reason == "fallback_to_original_for_high_target":
             message += " | face target is near original budget, so optimization used original mesh"
 
+        from ..models.schemas import TextureExportInfo
+
+        texture_export_info = quality_meta.get("texture_export_info")
+        if isinstance(texture_export_info, dict):
+            texture_export_info = TextureExportInfo(**texture_export_info)
+
+        has_uv_density = bool(
+            quality_meta.get("original_has_textures", False)
+            and quality_meta.get("importance_scores") is not None
+        )
+
         return OptimizeResponse(
             job_id=request.job_id,
             original_stats=original_stats,
@@ -388,6 +405,10 @@ async def optimize_mesh(request: OptimizeRequest):
             reduction_percent=reduction,
             processing_time_seconds=processing_time,
             has_importance_map=quality_meta.get("importance_scores") is not None,
+            has_uv_density_map=has_uv_density,
+            has_animation_map=quality_meta.get("original_has_animation", False),
+            is_animated=quality_meta.get("original_has_animation", False),
+            texture_export=texture_export_info,
             message=message,
         )
 

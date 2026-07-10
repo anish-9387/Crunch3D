@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 from ..models.schemas import MeshStats, LODResult
 from .importance_mapper import compute_importance
+from .importance.uv_density import has_uvs as _detect_uvs
+from .importance.animation_awareness import has_animation_data
 
 
 # ---------------------------------------------------------------------------
@@ -78,9 +80,10 @@ def _timing_report() -> None:
     top_level = ["Mesh loading", "Component extraction",
                  "Scene reconstruction", "Export"]
     per_comp   = ["Adjacency build", "Curvature", "Normal variation",
-                  "Boundary detection", "Feature density",
-                  "Normalization", "Laplacian smoothing",
-                  "Quality injection", "QEM decimation"]
+                   "Boundary detection", "Feature density",
+                   "UV density", "Animation awareness",
+                   "Normalization", "Laplacian smoothing",
+                   "Quality injection", "QEM decimation"]
 
     lines: list[str] = []
     lines.append("")
@@ -192,13 +195,18 @@ def _component_to_pymeshlab(mesh: trimesh.Trimesh) -> pymeshlab.MeshSet:
     return ms
 
 
-def _pymeshlab_to_trimesh(ms: pymeshlab.MeshSet) -> trimesh.Trimesh | None:
-    """Save the current MeshSet mesh to a temp OBJ, reload as Trimesh."""
+def _pymeshlab_to_trimesh(ms: pymeshlab.MeshSet, _export_info: dict | None = None) -> trimesh.Trimesh | None:
+    """Save the current MeshSet mesh to a temp OBJ, reload as Trimesh.
+    
+    If *_export_info* is provided, it is updated with the export metadata.
+    """
     tmp = tempfile.NamedTemporaryFile(suffix=".obj", delete=False)
     tmp_path = tmp.name
     tmp.close()
     try:
-        _save_current_mesh(ms, tmp_path)
+        info = _save_current_mesh(ms, tmp_path)
+        if _export_info is not None:
+            _export_info.update(info)
         result = trimesh.load(tmp_path, process=False)
         if isinstance(result, trimesh.Scene):
             parts = [g for g in result.geometry.values()
@@ -220,45 +228,166 @@ def _safe_remove(path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Helpers — PyMeshLab save (unchanged from original, kept for compatibility)
+# Helpers — texture-aware export
 # ---------------------------------------------------------------------------
 
-def _save_current_mesh(ms: pymeshlab.MeshSet, output_path: str | Path) -> None:
+def _export_mesh_with_texture_tracking(
+    mesh: trimesh.Trimesh,
+    output_path: str,
+    original_has_textures: bool,
+) -> dict:
+    """
+    Export a Trimesh to disk and report texture preservation status.
+
+    Tries trimesh's export (which may preserve textures via material files
+    for OBJ/MTL).  If the output format does not support textures or the
+    export loses them, records the reason.
+    """
+    output_ext = os.path.splitext(output_path)[1].lower()
+    texture_loss_reason: str | None = None
+    export_mode_used = "full"
+    warnings: list[str] = []
+
+    try:
+        mesh.export(output_path)
+    except Exception as exc:
+        warnings.append(f"Standard trimesh export failed: {exc}")
+        try:
+            geo = trimesh.Trimesh(
+                vertices=np.asarray(mesh.vertices, dtype=np.float64),
+                faces=np.asarray(mesh.faces, dtype=np.int64),
+                process=False,
+            )
+            geo.export(output_path)
+            export_mode_used = "trimesh_fallback"
+        except Exception as exc2:
+            raise RuntimeError(f"Could not save mesh output: {exc2}")
+
+    # Determine texture preservation
+    texture_preserved = True
+    if original_has_textures:
+        if output_ext not in (".obj", ".glb", ".gltf"):
+            texture_preserved = False
+            texture_loss_reason = (
+                f"Output format '{output_ext}' does not support embedded textures"
+            )
+            warnings.append(texture_loss_reason)
+        elif export_mode_used == "trimesh_fallback":
+            texture_preserved = False
+            texture_loss_reason = "Fallback export mode — textures not preserved"
+            warnings.append(texture_loss_reason)
+
+    return _export_result(
+        texture_preserved=texture_preserved,
+        texture_loss_reason=texture_loss_reason,
+        export_mode_used=export_mode_used,
+        warnings=warnings,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helpers — PyMeshLab save with texture-export tracking
+# ---------------------------------------------------------------------------
+
+# Export mode descriptions for the texture tracking log
+_EXPORT_MODE_LABELS: dict[str, str] = {
+    "full": "Full export with textures and all attributes",
+    "no_textures": "Textures disabled — geometry only with vertex attributes",
+    "no_texcoord": "Textures and UV coordinates disabled",
+    "minimal": "Minimal export — geometry only, no normals, no colours",
+    "trimesh_fallback": "Fallback trimesh export — pure geometry",
+}
+
+
+def _export_result(
+    texture_preserved: bool,
+    texture_loss_reason: str | None,
+    export_mode_used: str,
+    warnings: list[str] | None = None,
+) -> dict:
+    return {
+        "texture_preserved": texture_preserved,
+        "texture_loss_reason": texture_loss_reason,
+        "export_mode_used": export_mode_used,
+        "warnings": warnings or [],
+    }
+
+
+def _save_current_mesh(
+    ms: pymeshlab.MeshSet,
+    output_path: str | Path,
+    original_has_textures: bool = False,
+) -> dict:
+    """
+    Save the current PyMeshLab mesh to disk, tracking texture fidelity.
+
+    Tries progressively simpler save configurations until one succeeds.
+    Returns a dict with texture-preservation metadata.
+    """
     output_path = str(output_path)
     save_attempts = [
-        {},
-        {"save_textures": False},
-        {"save_textures": False, "save_wedge_texcoord": False},
-        {
-            "save_textures": False,
-            "save_wedge_texcoord": False,
-            "save_vertex_normal": False,
-            "save_vertex_color": False,
-            "save_face_color": False,
-        },
+        ({"save_textures": True}, "full"),
+        ({"save_textures": False}, "no_textures"),
+        ({"save_textures": False, "save_wedge_texcoord": False}, "no_texcoord"),
+        (
+            {
+                "save_textures": False,
+                "save_wedge_texcoord": False,
+                "save_vertex_normal": False,
+                "save_vertex_color": False,
+                "save_face_color": False,
+            },
+            "minimal",
+        ),
     ]
 
     last_error: Exception | None = None
-    for kwargs in save_attempts:
+    export_mode_used = "full"
+
+    for kwargs, mode_name in save_attempts:
         try:
             ms.save_current_mesh(output_path, **kwargs)
-            return
+            export_mode_used = mode_name
+            break
         except Exception as exc:
             last_error = exc
+            continue
+    else:
+        # Final fallback: export pure geometry through trimesh.
+        try:
+            mesh = ms.current_mesh()
+            vertices = np.asarray(mesh.vertex_matrix(), dtype=np.float64)
+            faces = np.asarray(mesh.face_matrix(), dtype=np.int64)
+            if vertices.size > 0 and faces.size > 0:
+                tri_mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+                tri_mesh.export(output_path)
+                export_mode_used = "trimesh_fallback"
+        except Exception as exc:
+            last_error = exc
+            raise RuntimeError(f"Could not save mesh output: {last_error}")
 
-    # Final fallback: export pure geometry through trimesh.
-    try:
-        mesh = ms.current_mesh()
-        vertices = np.asarray(mesh.vertex_matrix(), dtype=np.float64)
-        faces = np.asarray(mesh.face_matrix(), dtype=np.int64)
-        if vertices.size > 0 and faces.size > 0:
-            tri_mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
-            tri_mesh.export(output_path)
-            return
-    except Exception as exc:
-        last_error = exc
+    # Determine texture preservation status
+    texture_preserved = True
+    texture_loss_reason = None
+    warnings: list[str] = []
 
-    raise RuntimeError(f"Could not save mesh output: {last_error}")
+    if original_has_textures and export_mode_used != "full":
+        texture_preserved = False
+        texture_loss_reason = (
+            f"PyMeshLab could not export with textures; "
+            f"used '{export_mode_used}' mode instead"
+        )
+        warnings.append(texture_loss_reason)
+    elif not original_has_textures and export_mode_used == "full":
+        if output_path.endswith((".obj", ".ply")):
+            pass  # Full mode without textures is fine for these formats
+
+    return _export_result(
+        texture_preserved=texture_preserved,
+        texture_loss_reason=texture_loss_reason,
+        export_mode_used=export_mode_used,
+        warnings=warnings,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -574,6 +703,29 @@ def _decimate_all_components(
 
 
 # ---------------------------------------------------------------------------
+# Helpers — texture / animation detection
+# ---------------------------------------------------------------------------
+
+def _components_have_textures(components: list[trimesh.Trimesh]) -> bool:
+    """Check if any component carries texture data (UVs + material)."""
+    for c in components:
+        if _detect_uvs(c):
+            return True
+        visual = getattr(c, "visual", None)
+        if visual is not None and getattr(visual, "kind", None) == "texture":
+            return True
+    return False
+
+
+def _components_has_animation(components: list[trimesh.Trimesh]) -> bool:
+    """Check if any component has rig/animation data or is deformation-sensitive."""
+    for c in components:
+        if has_animation_data(c):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Helpers — quality guard
 # ---------------------------------------------------------------------------
 
@@ -706,6 +858,11 @@ def decimate_mesh(
     components = _load_components(input_path)
     total_faces = sum(len(c.faces) for c in components)
 
+    # ── Detect texture and animation metadata ────────────────────────────
+    original_has_textures = _components_have_textures(components)
+    original_has_animation = _components_has_animation(components)
+    texture_export_info: dict | None = None
+
     # ── 2. Skip decimation if mesh is already at or below target ───────────
     if total_faces <= 4 or target_faces >= total_faces:
         combined = (trimesh.util.concatenate(components)
@@ -720,6 +877,14 @@ def decimate_mesh(
             "quality_guard_relaxed": False,
             "quality_guard_satisfied": True,
             "importance_scores": importance_scores,
+            "texture_export_info": {
+                "texture_preserved": original_has_textures,
+                "texture_loss_reason": None,
+                "export_mode_used": "full",
+                "warnings": [],
+            },
+            "original_has_textures": original_has_textures,
+            "original_has_animation": original_has_animation,
         }
 
     requested_target = int(max(4, min(target_faces, total_faces - 1)))
@@ -773,7 +938,9 @@ def decimate_mesh(
         )
 
         with _t("Export"):
-            result.export(output_path)
+            texture_export_info = _export_mesh_with_texture_tracking(
+                result, output_path, original_has_textures
+            )
         stats = _stats_from_trimesh(result, output_path)
         deviation = _surface_deviation_percent(quality_ref, result) if quality_ref else None
 
@@ -793,6 +960,9 @@ def decimate_mesh(
                 "quality_guard_relaxed": candidate_target != requested_target,
                 "quality_guard_satisfied": True,
                 "importance_scores": importance_scores,
+                "texture_export_info": texture_export_info,
+                "original_has_textures": original_has_textures,
+                "original_has_animation": original_has_animation,
             }
 
     if last_stats is None:
@@ -809,6 +979,9 @@ def decimate_mesh(
         "quality_guard_relaxed": last_target != requested_target,
         "quality_guard_satisfied": quality_guard_satisfied,
         "importance_scores": importance_scores,
+        "texture_export_info": texture_export_info,
+        "original_has_textures": original_has_textures,
+        "original_has_animation": original_has_animation,
     }
 
 
