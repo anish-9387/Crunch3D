@@ -8,7 +8,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from ..models.schemas import (
+from .schemas import (
     UploadResponse, OptimizeRequest, OptimizeResponse, JobStatus,
     FeedbackRequest, FeedbackResponse, TrainingSummaryResponse, TrainingBootstrapResponse,
     OptimizationRecommendationResponse,
@@ -19,7 +19,7 @@ from ..services.file_handler import (
     validate_extension, cleanup_job,
 )
 from ..services.mesh_analyzer import analyze_mesh
-from ..services.mesh_optimizer import decimate_mesh, generate_lods, resolve_output_extension
+from ..engine.mesh_optimizer import decimate_mesh, generate_lods, resolve_output_extension
 from ..services.feedback_trainer import (
     record_optimization_event,
     record_feedback_event,
@@ -379,7 +379,7 @@ async def optimize_mesh(request: OptimizeRequest):
         elif source_reason == "fallback_to_original_for_high_target":
             message += " | face target is near original budget, so optimization used original mesh"
 
-        from ..models.schemas import TextureExportInfo
+        from .schemas import TextureExportInfo
 
         texture_export_info = quality_meta.get("texture_export_info")
         if isinstance(texture_export_info, dict):

@@ -3,7 +3,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..models.schemas import FeedbackRequest
+from ..api.schemas import FeedbackRequest
 
 TRAINING_DIR = Path(__file__).parent.parent / "training"
 OPTIMIZATION_EVENTS_FILE = TRAINING_DIR / "optimization_events.jsonl"

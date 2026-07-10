@@ -45,10 +45,10 @@ import numpy as np
 import trimesh
 import trimesh.graph
 
-from .importance.curvature import compute_curvature_importance
-from .importance.config import CURVATURE_MODE
-from .importance.uv_density import compute_uv_density_importance, has_uvs
-from .importance.animation_awareness import compute_animation_importance
+from .curvature import compute_curvature_importance
+from .config import CURVATURE_MODE
+from .uv_density import compute_uv_density_importance, has_uvs
+from .animation_awareness import compute_animation_importance
 
 
 # ---------------------------------------------------------------------------

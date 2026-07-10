@@ -11,8 +11,8 @@ node_modules/
 dist/
 
 # Uploads & processed files
-backend/uploads/
-backend/processed/
+model/uploads/
+model/processed/
 
 # IDE
 .vscode/

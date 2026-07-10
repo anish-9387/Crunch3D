@@ -463,16 +463,15 @@ No API keys required.
 
 Open two terminals.
 
-**Terminal 1 — Backend**
+**Terminal 1 — Model Server**
 ```bash
-cd backend
-source venv/bin/activate
-uvicorn backend.main:app --reload --port 8000
+source model/venv/bin/activate
+uvicorn model.main:app --reload --port 8000
 ```
 
-**Terminal 2 — Frontend**
+**Terminal 2 — Web Client**
 ```bash
-cd frontend
+cd web
 npm run dev
 ```
 

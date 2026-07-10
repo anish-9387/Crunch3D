@@ -28,98 +28,36 @@ import trimesh.util
 
 logger = logging.getLogger(__name__)
 
-from ..models.schemas import MeshStats, LODResult
-from .importance_mapper import compute_importance
-from .importance.uv_density import has_uvs as _detect_uvs
-from .importance.animation_awareness import has_animation_data
+from ..api.schemas import MeshStats, LODResult
+from ..importance.importance_mapper import compute_importance
+from ..importance.uv_density import has_uvs as _detect_uvs
+from ..importance.animation_awareness import has_animation_data
+
+from ..core.config import ENABLE_GNN_IMPORTANCE, ENABLE_PERSISTENCE_GATE, KAPPA
+from ..learning.inference import predict_edge_importance
+from ..topology.persistence import compute_edge_persistence
+from ..topology.gate import admissible_edges
 
 
 # ---------------------------------------------------------------------------
 # Timing instrumentation (temporary — left in place for profiling)
 # ---------------------------------------------------------------------------
 
-_TIMING: dict[str, float] = {}
-_TIMING_COUNT: dict[str, int] = {}
-
-
-class _t:
-    """Context manager that records elapsed seconds into ``_TIMING``."""
-    __slots__ = ('label', '_t0')
-
-    def __init__(self, label: str) -> None:
-        self.label = label
-
-    def __enter__(self) -> None:
-        self._t0 = _time.perf_counter()
-
-    def __exit__(self, *args: object) -> None:
-        dt = _time.perf_counter() - self._t0
-        _TIMING[self.label] = _TIMING.get(self.label, 0.0) + dt
-        _TIMING_COUNT[self.label] = _TIMING_COUNT.get(self.label, 0) + 1
-
-
 def _timing_reset() -> None:
-    _TIMING.clear()
-    _TIMING_COUNT.clear()
-
+    pass
 
 def _timing_report() -> None:
-    """Print the full timing report to stdout."""
-    from .importance_mapper import TIMING as _IMP_T, TIMING_COUNT as _IMP_C
-
-    # Merge importance_mapper timing into the local dict
-    for k, v in _IMP_T.items():
-        _TIMING.setdefault(k, 0.0)
-        _TIMING[k] += v
-        _TIMING_COUNT.setdefault(k, 0)
-        _TIMING_COUNT[k] += _IMP_C.get(k, 0)
-
-    _SEC_TO_MS = 1000.0
-
-    # Display order
-    top_level = ["Mesh loading", "Component extraction",
-                 "Scene reconstruction", "Export"]
-    per_comp   = ["Adjacency build", "Curvature", "Normal variation",
-                   "Boundary detection", "Feature density",
-                   "UV density", "Animation awareness",
-                   "Normalization", "Laplacian smoothing",
-                   "Quality injection", "QEM decimation"]
-
-    lines: list[str] = []
-    lines.append("")
-    lines.append("=== TIMING REPORT ===")
-
-    for label in top_level:
-        total_s = _TIMING.get(label, 0.0)
-        lines.append(f"{label:<25s} {total_s * _SEC_TO_MS:>12.1f} ms")
-
-    lines.append("Per-component (avg / total):")
-    for label in per_comp:
-        total_s = _TIMING.get(label, 0.0)
-        count   = _TIMING_COUNT.get(label, 0)
-        avg_ms  = (total_s / count * _SEC_TO_MS) if count else 0.0
-        lines.append(
-            f"  {label:<23s} {avg_ms:>8.2f} ms / {total_s:>6.3f} s"
-        )
-
-    total_all = sum(_TIMING.values())
-    lines.append(f"Total:{'':>20s} {total_all:>8.3f} s")
-    lines.append("=====================")
-    print("\n".join(lines))
+    pass
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-SUPPORTED_SAVE_EXTENSIONS = {".obj", ".stl", ".ply", ".off"}
 QUALITY_SAMPLE_CAP = 700
 QUALITY_CHUNK_SIZE = 160
 
-
-# ---------------------------------------------------------------------------
-# Helpers — format
-# ---------------------------------------------------------------------------
+SUPPORTED_SAVE_EXTENSIONS = {".obj", ".stl", ".ply", ".off"}
 
 def resolve_output_extension(input_extension: str) -> str:
     ext = (input_extension or "").lower().strip()
@@ -135,45 +73,14 @@ def resolve_output_extension(input_extension: str) -> str:
 def _load_components(path: str | Path) -> list[trimesh.Trimesh]:
     """
     Load a mesh file and return a flat list of Trimesh components.
-
-    Handles:
-      - Single Trimesh  (already one piece)
-      - trimesh.Scene   (GLB / GLTF / FBX / multi-group OBJ)
-      - Disconnected geometry inside a single Trimesh (split by body)
-
-    Always returns at least one component or raises ValueError.
     """
-    with _t("Mesh loading"):
-        loaded = trimesh.load(str(path), process=False)
-
-    meshes: list[trimesh.Trimesh] = []
-
-    with _t("Component extraction"):
-        if isinstance(loaded, trimesh.Scene):
-            for node_name in loaded.graph.nodes_geometry:
-                val = loaded.graph[node_name]
-                transform = val[0]
-                geom_name = val[1] if len(val) >= 2 else node_name
-                geom = loaded.geometry.get(geom_name)
-                if not isinstance(geom, trimesh.Trimesh) or len(geom.faces) == 0:
-                    continue
-                verts = trimesh.transformations.transform_points(
-                    geom.vertices.copy(), transform
-                )
-                transformed = trimesh.Trimesh(
-                    vertices=verts,
-                    faces=geom.faces.copy(),
-                    process=False,
-                )
-                meshes.append(transformed)
-
-        elif isinstance(loaded, trimesh.Trimesh):
-            parts = loaded.split(only_watertight=False)
-            for p in parts:
-                if isinstance(p, trimesh.Trimesh) and len(p.faces) > 0:
-                    meshes.append(p)
-            if not meshes and len(loaded.faces) > 0:
-                meshes.append(loaded)
+    loaded = trimesh.load(str(path), process=False)
+    if isinstance(loaded, trimesh.Scene):
+        meshes = [geom for geom in loaded.geometry.values() if isinstance(geom, trimesh.Trimesh)]
+    elif isinstance(loaded, trimesh.Trimesh):
+        meshes = [loaded]
+    else:
+        meshes = []
 
     if not meshes:
         raise ValueError(f"No usable mesh geometry found in: {path}")
@@ -618,7 +525,59 @@ def _decimate_component(
             verts = np.asarray(pml_mesh.vertex_matrix(), dtype=np.float64)
             faces = np.asarray(pml_mesh.face_matrix(), dtype=np.int64)
             tmp_trimesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
-            importance = compute_importance(tmp_trimesh)
+            
+            # Baseline importance (curvature, uv density, etc.)
+            base_importance = compute_importance(tmp_trimesh)
+            
+            # 1. GNN Edge Importance Predictor
+            if ENABLE_GNN_IMPORTANCE:
+                try:
+                    gnn_edge_importance = predict_edge_importance(tmp_trimesh)
+                    # Map edge importance back to vertices (max of connected edges)
+                    gnn_vert_importance = np.zeros(len(verts), dtype=np.float64)
+                    edges = tmp_trimesh.edges_unique
+                    for i, (u, v) in enumerate(edges):
+                        score = gnn_edge_importance[i]
+                        gnn_vert_importance[u] = max(gnn_vert_importance[u], score)
+                        gnn_vert_importance[v] = max(gnn_vert_importance[v], score)
+                    
+                    # Apply Equation 2: Cost = Cost_QEM * (1 + kappa * y_hat)
+                    # Note: We scale importance, which in PyMeshLab dictates *quality* (protection from collapse).
+                    # Higher cost in QEM means it is less likely to be collapsed.
+                    # PyMeshLab penalizes collapse for vertices with higher quality.
+                    # Therefore, we directly scale the vertex importance.
+                    base_importance = base_importance * (1.0 + KAPPA * gnn_vert_importance)
+                    logger.info("Applied GNN importance scoring.")
+                except Exception as e:
+                    logger.warning("GNN importance failed, falling back to base heuristics: %s", e)
+            
+            # 2. Persistence Gate
+            if ENABLE_PERSISTENCE_GATE:
+                try:
+                    # Use base_importance (curvature proxy) for filtration
+                    edge_pers = compute_edge_persistence(tmp_trimesh, base_importance)
+                    admissible = admissible_edges(edge_pers)
+                    
+                    # Lock vertices belonging to inadmissible edges
+                    locked_verts = set()
+                    for edge in edge_pers.keys():
+                        if edge not in admissible:
+                            locked_verts.add(edge[0])
+                            locked_verts.add(edge[1])
+                    
+                    if locked_verts:
+                        logger.info("Locking %d vertices due to persistence gate.", len(locked_verts))
+                        for v in locked_verts:
+                            base_importance[v] = 999.0 # Absolute protection
+                except Exception as e:
+                    logger.warning("Persistence gate failed, continuing without it: %s", e)
+            
+            # Normalize to 0-1 for PyMeshLab if it exceeded
+            max_imp = np.max(base_importance)
+            if max_imp > 1.0 and max_imp != 999.0:
+                base_importance = base_importance / max_imp
+                
+            importance = base_importance
             logger.info("Importance array: %d", len(importance))
             assert len(importance) == pml_verts, (
                 f"Importance len {len(importance)} != vertex count {pml_verts}"
@@ -628,20 +587,44 @@ def _decimate_component(
                 logger.info("Stored in inter-retry cache (%d)", len(importance))
 
     if importance is not None:
-        with _t("Quality injection"):
-            injection_ok = _inject_importance_as_quality(ms, importance)
+        injection_ok = _inject_importance_as_quality(ms, importance)
         logger.info("Injection success: %s", injection_ok)
 
-    with _t("QEM decimation"):
-        _apply_decimation(
-            ms=ms,
-            target_faces=target_faces,
-            preserve_normals=preserve_normals,
-            preserve_boundaries=preserve_boundaries,
-        )
+    _apply_decimation(
+        ms=ms,
+        target_faces=target_faces,
+        preserve_normals=preserve_normals,
+        preserve_boundaries=preserve_boundaries,
+    )
 
-    with _t("Scene reconstruction"):
-        result = _pymeshlab_to_trimesh(ms)
+    result = _pymeshlab_to_trimesh(ms)
+        
+    # 3. Persistence-Gated Texture Reallocation (Paper Eq. 3)
+    # This computes the theoretical texel density allocation. Since we don't have SLIM
+    # unwrapper built-in natively yet, we compute the target densities and log them.
+    from ..core.config import ENABLE_TEXTURE_REALLOCATION
+    if ENABLE_TEXTURE_REALLOCATION and result is not None and len(result.faces) > 0:
+        try:
+            from ..texture.reallocation import reallocate_texel_density
+            
+            # Reconstruct edge persistence map for the *new* mesh
+            if ENABLE_PERSISTENCE_GATE:
+                new_imp = compute_importance(result)
+                new_edge_pers = compute_edge_persistence(result, new_imp)
+                
+                # Face importance is average of vertex importances
+                face_importance = np.mean(new_imp[result.faces], axis=1)
+                
+                # Compute densities
+                densities = reallocate_texel_density(
+                    faces=np.asarray(result.faces, dtype=np.int64),
+                    importance=face_importance,
+                    edge_persistence=new_edge_pers,
+                )
+                logger.info("Computed texel reallocation targets for %d faces.", len(densities))
+        except Exception as e:
+            logger.warning("Texture reallocation failed: %s", e)
+            
     return result
 
 
@@ -867,8 +850,7 @@ def decimate_mesh(
     if total_faces <= 4 or target_faces >= total_faces:
         combined = (trimesh.util.concatenate(components)
                     if len(components) > 1 else components[0])
-        with _t("Export"):
-            combined.export(output_path)
+        combined.export(output_path)
         stats = _stats_from_trimesh(combined, output_path)
         _timing_report()
         return stats, {
@@ -937,10 +919,9 @@ def decimate_mesh(
             cache=_importance_cache,
         )
 
-        with _t("Export"):
-            texture_export_info = _export_mesh_with_texture_tracking(
-                result, output_path, original_has_textures
-            )
+        texture_export_info = _export_mesh_with_texture_tracking(
+            result, output_path, original_has_textures
+        )
         stats = _stats_from_trimesh(result, output_path)
         deviation = _surface_deviation_percent(quality_ref, result) if quality_ref else None
 

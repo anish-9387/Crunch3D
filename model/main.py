@@ -3,7 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import mesh
+from .api import routes
 
 app = FastAPI(
     title="OptiMesh API",
@@ -29,7 +29,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(mesh.router)
+app.include_router(routes.router)
 
 
 @app.get("/")

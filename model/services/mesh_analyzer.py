@@ -21,8 +21,8 @@ import numpy as np
 import trimesh
 import trimesh.util
 
-from ..models.schemas import MeshStats
-from .importance.animation_awareness import has_animation_data
+from ..api.schemas import MeshStats
+from ..importance.animation_awareness import has_animation_data
 
 
 # ---------------------------------------------------------------------------

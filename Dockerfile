@@ -9,11 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libp11-kit0 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY backend/requirements.txt /app/
+COPY model/requirements.txt /app/
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-COPY backend /app/backend
+COPY model /app/model
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "uvicorn model.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
