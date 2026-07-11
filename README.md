@@ -45,11 +45,11 @@ Upload a mesh. Crunch3D analyzes it instantly — face count, vertex count, UVs,
 
 ### Interactive Mesh Optimization Demo
 
-![Interactive Mesh Optimization Demo](frontend/assets/demo_beforeafter.png)
+![Interactive Mesh Optimization Demo](web/assets/demo_beforeafter.png)
 
 ### High-Poly vs Optimized Mesh Comparison
 
-![High-Poly vs Optimized Mesh Comparison](frontend/assets/before_after_3.png)
+![High-Poly vs Optimized Mesh Comparison](web/assets/before_after_3.png)
 
 ### Platform Presets
 
