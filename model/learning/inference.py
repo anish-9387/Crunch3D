@@ -3,6 +3,8 @@ learning/inference.py — GNN inference for edge importance prediction.
 
 Loads a pre-trained model and predicts ŷ_σ for each edge.
 Used at decimation time when ENABLE_GNN_IMPORTANCE is True.
+
+Uses geometry-aware features from features.py (same as training).
 """
 
 from __future__ import annotations
@@ -16,10 +18,12 @@ import numpy as np
 if TYPE_CHECKING:
     import trimesh
 
+from .features import compute_vertex_features
+
 logger = logging.getLogger(__name__)
 
 # Default model checkpoint path
-DEFAULT_MODEL_PATH = Path(__file__).parent / "checkpoints" / "edge_importance.pt"
+DEFAULT_MODEL_PATH = Path(__file__).parent / "checkpoints" / "crunch3d_gnn_model.pt"
 
 
 def predict_edge_importance(
@@ -34,19 +38,17 @@ def predict_edge_importance(
         Input mesh.
     model_path : path, optional
         Path to the saved model checkpoint.
-        Defaults to ``learning/checkpoints/edge_importance.pt``.
+        Defaults to ``learning/checkpoints/crunch3d_gnn_model.pt``.
 
     Returns
     -------
     importance : (E,) float array
-        Predicted importance ŷ_σ ∈ [0, 1] per edge.
+        Predicted importance ŷ_σ ∈ [0, 1] per unique edge.
 
     Raises
     ------
     ImportError
         If torch/torch-geometric are not installed.
-    FileNotFoundError
-        If the model checkpoint doesn't exist.
     """
     try:
         import torch
@@ -63,11 +65,9 @@ def predict_edge_importance(
         logger.warning(
             "No trained model found at %s. "
             "Returning uniform importance (0.5). "
-            "Train a model first with: python -m model.learning.trainer",
+            "Train a model first with: python -m model.learning.trainer --data_dir model/learning/training_data",
             model_path,
         )
-        # Fallback: count edges and return uniform
-        # Fallback: uniform importance based on unique edges
         return np.full(len(mesh.edges_unique), 0.5, dtype=np.float64)
 
     # Load model and run inference
@@ -78,18 +78,13 @@ def predict_edge_importance(
     model.load_state_dict(state)
     model.eval()
 
-    # Build graph data from mesh
-    vertices = np.asarray(mesh.vertices, dtype=np.float32)
-    faces = np.asarray(mesh.faces, dtype=np.int64)
+    # Geometry-aware node features (same as training)
+    x = torch.tensor(compute_vertex_features(mesh), dtype=torch.float32)
 
     # Build undirected edges and their reverse to get bidirectional graph
     edges_unique = mesh.edges_unique
     edges_bidirectional = np.vstack([edges_unique, edges_unique[:, [1, 0]]])
     edge_index = torch.tensor(edges_bidirectional, dtype=torch.long).t().contiguous()
-
-    # Simple node features: vertex positions + normals
-    normals = np.asarray(mesh.vertex_normals, dtype=np.float32)
-    x = torch.tensor(np.hstack([vertices, normals]), dtype=torch.float32)
 
     with torch.no_grad():
         y = model(x, edge_index)

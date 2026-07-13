@@ -13,6 +13,7 @@ dist/
 # Uploads & processed files
 model/uploads/
 model/processed/
+model/learning/training_data/
 
 # IDE
 .vscode/
