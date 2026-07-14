@@ -512,7 +512,15 @@ input[type="range"] {
   flex-direction: column;
   min-height: 530px;
   max-height: 530px;
-  overflow: hidden;
+  height: 530px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.inspector::-webkit-scrollbar {
+  display: none;
 }
 
 .inspector-header {
@@ -629,6 +637,9 @@ input[type="range"] {
   border: 1px solid var(--border-soft);
   border-radius: 10px;
   padding: 14px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .stat-item .label {

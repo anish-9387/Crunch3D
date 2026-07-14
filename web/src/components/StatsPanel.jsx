@@ -56,7 +56,11 @@ export default function StatsPanel({
                 {original.file_size_mb}MB {'->'} {optimized.file_size_mb}MB
               </div>
               <div className="sub">
-                {sizeReductionPercent !== null ? `${sizeReductionPercent}% smaller` : '-'}
+                {sizeReductionPercent !== null ? (
+                  sizeReductionPercent >= 0 
+                    ? `${sizeReductionPercent}% smaller` 
+                    : `${Math.abs(sizeReductionPercent)}% larger`
+                ) : '-'}
               </div>
             </div>
 

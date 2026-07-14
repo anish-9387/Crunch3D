@@ -2,6 +2,8 @@ import json
 import time
 import zipfile
 import io
+import logging
+import asyncio
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException
@@ -29,6 +31,8 @@ from ..services.feedback_trainer import (
 )
 
 router = APIRouter(prefix="/api", tags=["mesh"])
+
+logger = logging.getLogger(__name__)
 
 # In-memory job store (replace with Redis for production)
 jobs: dict[str, dict] = {}
@@ -194,7 +198,7 @@ def _preset_for_target(target_faces: int) -> str:
 
 
 @router.post("/upload", response_model=UploadResponse)
-async def upload_mesh(file: UploadFile = File(...)):
+async def upload_model(file: UploadFile = File(...)):
     if not file.filename or not validate_extension(file.filename):
         raise HTTPException(400, "Unsupported file format. Use: .obj, .stl, .ply, .glb, .gltf, .fbx, .off")
 
@@ -286,33 +290,68 @@ async def optimize_mesh(request: OptimizeRequest):
     output_path = output_dir / output_filename
 
     try:
-        jobs[request.job_id]["progress"] = 30
-        jobs[request.job_id]["stage"] = "Decimating mesh"
+        # Run optimization in an isolated subprocess to prevent Torch/PyMeshLab C++ segfaults/deadlocks
+        import sys
+        
+        args = [
+            sys.executable, "-m", "model.engine.worker",
+            "--job", request.job_id,
+            "--input", str(input_path),
+            "--output", str(output_path),
+            "--target", str(target_faces),
+            "--out-dir", str(output_dir),
+            "--base-name", base_name,
+            "--out-ext", output_ext,
+            "--original-faces", str(original_stats.face_count),
+            "--max-dev", str(request.max_deviation_percent),
+            "--max-over", str(request.max_target_overshoot_percent)
+        ]
+        if request.preserve_normals: args.append("--preserve-normals")
+        if request.preserve_boundaries: args.append("--preserve-boundaries")
+        if request.generate_lods: args.append("--generate-lods")
+        if request.strict_quality: args.append("--strict-quality")
 
-        optimized_stats, quality_meta = decimate_mesh(
-            input_path=input_path,
-            output_path=output_path,
-            target_faces=target_faces,
-            preserve_normals=request.preserve_normals,
-            preserve_boundaries=request.preserve_boundaries,
-            strict_quality=request.strict_quality,
-            max_deviation_percent=request.max_deviation_percent,
-            max_target_overshoot_percent=request.max_target_overshoot_percent,
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
         )
-
-        lod_results = None
-        if request.generate_lods:
-            jobs[request.job_id]["progress"] = 60
-            jobs[request.job_id]["stage"] = "Generating LODs"
-            lod_results = generate_lods(
-                input_path=input_path,
-                output_dir=output_dir,
-                base_name=base_name,
-                original_faces=original_stats.face_count,
-                output_extension=output_ext,
-                preserve_normals=request.preserve_normals,
-                preserve_boundaries=request.preserve_boundaries,
-            )
+        
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode != 0:
+            logger.error(f"Worker failed: stdout={stdout.decode()} stderr={stderr.decode()}")
+            raise Exception(f"Optimization worker failed: stdout={stdout.decode()} stderr={stderr.decode()}")
+            
+        try:
+            # We look for the JSON output in stdout (it might have PyMeshLab logs before it)
+            # Find the last line that looks like our JSON
+            lines = stdout.decode().strip().split('\n')
+            json_str = lines[-1]
+            for line in reversed(lines):
+                if line.startswith('{"status":'):
+                    json_str = line
+                    break
+            result = json.loads(json_str)
+            
+            if result.get("status") != "success":
+                raise Exception(result.get("error", "Unknown error in worker"))
+                
+            optimized_stats_dict = result["optimized_stats"]
+            quality_meta = result["quality_meta"]
+            lod_results_dict = result.get("lod_results")
+            
+            # Reconstruct MeshStats from dict
+            from .schemas import MeshStats, LODResult
+            optimized_stats = MeshStats(**optimized_stats_dict)
+            if lod_results_dict:
+                lod_results = [LODResult(**d) for d in lod_results_dict]
+            else:
+                lod_results = None
+                
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse worker output: {stdout.decode()} \nStderr: {stderr.decode()}")
+            raise Exception(f"Worker returned invalid JSON: {str(e)}")
 
         processing_time = round(time.time() - start_time, 2)
         reduction = 0.0

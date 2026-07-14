@@ -9,6 +9,7 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+        timeout: 300000,  // 5 min — mesh optimization can be slow on large models
       },
     },
   },

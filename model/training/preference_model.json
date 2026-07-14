@@ -1,6 +1,6 @@
 {
-  "generated_at_utc": "2026-07-13T14:50:14.580999+00:00",
-  "training_samples_used": 8,
+  "generated_at_utc": "2026-07-14T05:58:28.860823+00:00",
+  "training_samples_used": 9,
   "profiles": [
     {
       "use_case": "general",
@@ -34,6 +34,15 @@
       "quality_priority": "quality",
       "sample_count": 1,
       "recommended_target_faces": 18000,
+      "preserve_shape": true,
+      "preserve_vertices": true,
+      "preserve_faces": true
+    },
+    {
+      "use_case": "mobile_game",
+      "quality_priority": "balanced",
+      "sample_count": 1,
+      "recommended_target_faces": 23600,
       "preserve_shape": true,
       "preserve_vertices": true,
       "preserve_faces": true

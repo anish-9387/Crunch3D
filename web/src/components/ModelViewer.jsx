@@ -1,6 +1,6 @@
 import { useState, Suspense, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, Center, Grid } from '@react-three/drei'
+import { OrbitControls, Center, Grid, GizmoHelper, GizmoViewport } from '@react-three/drei'
 import * as THREE from 'three'
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js'
 import { STLLoader } from 'three/addons/loaders/STLLoader.js'
@@ -337,6 +337,16 @@ function Scene({ url, filename, wireframe, importanceEnabled, importanceScores, 
       </Suspense>
       <CameraReporter onCameraChange={onCameraChange} />
       <OrbitControls makeDefault enableDamping dampingFactor={0.1} />
+      
+      {!performanceMode && (
+        <>
+          <axesHelper args={[10]} />
+          <GizmoHelper alignment="bottom-right" margin={[40, 40]}>
+            <GizmoViewport axisColors={['#ff3653', '#8adb00', '#2c8fff']} labelColor="white" />
+          </GizmoHelper>
+        </>
+      )}
+
       {!performanceMode && (
         <Grid
           args={[10, 10]}

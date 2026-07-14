@@ -76,7 +76,11 @@ def _load_components(path: str | Path) -> list[trimesh.Trimesh]:
     """
     loaded = trimesh.load(str(path), process=False)
     if isinstance(loaded, trimesh.Scene):
-        meshes = [geom for geom in loaded.geometry.values() if isinstance(geom, trimesh.Trimesh)]
+        dumped = loaded.dump(concatenate=False)
+        # `dump()` can sometimes return a single mesh or a numpy array of meshes
+        if isinstance(dumped, trimesh.Trimesh):
+            dumped = [dumped]
+        meshes = [geom for geom in dumped if isinstance(geom, trimesh.Trimesh)]
     elif isinstance(loaded, trimesh.Trimesh):
         meshes = [loaded]
     else:
@@ -858,7 +862,7 @@ def decimate_mesh(
             "quality_deviation_percent": 0.0,
             "quality_guard_relaxed": False,
             "quality_guard_satisfied": True,
-            "importance_scores": importance_scores,
+            "importance_scores": None,
             "texture_export_info": {
                 "texture_preserved": original_has_textures,
                 "texture_loss_reason": None,
