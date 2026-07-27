@@ -65,9 +65,10 @@ def main():
         }))
         
     except Exception as e:
+        error_str = str(e) or traceback.format_exc() or "Unknown error (empty exception)"
         print(json.dumps({
             "status": "error",
-            "error": str(e),
+            "error": error_str,
             "traceback": traceback.format_exc()
         }))
         sys.exit(1)

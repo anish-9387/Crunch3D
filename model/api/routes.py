@@ -238,6 +238,46 @@ async def upload_model(file: UploadFile = File(...)):
     )
 
 
+def _run_decimation(
+    input_path: str,
+    output_path: str,
+    target_faces: int,
+    preserve_normals: bool,
+    preserve_boundaries: bool,
+    strict_quality: bool,
+    max_deviation_percent: float,
+    max_target_overshoot_percent: float,
+    generate_lods: bool,
+    out_dir: str,
+    base_name: str,
+    out_ext: str,
+    original_faces: int,
+) -> tuple:
+    from ..engine.mesh_optimizer import decimate_mesh, generate_lods as _gen_lods
+    optimized_stats, quality_meta = decimate_mesh(
+        input_path=input_path,
+        output_path=output_path,
+        target_faces=target_faces,
+        preserve_normals=preserve_normals,
+        preserve_boundaries=preserve_boundaries,
+        strict_quality=strict_quality,
+        max_deviation_percent=max_deviation_percent,
+        max_target_overshoot_percent=max_target_overshoot_percent,
+    )
+    lod_results = None
+    if generate_lods:
+        lod_results = _gen_lods(
+            input_path=input_path,
+            output_dir=out_dir,
+            base_name=base_name,
+            original_faces=original_faces,
+            output_extension=out_ext,
+            preserve_normals=preserve_normals,
+            preserve_boundaries=preserve_boundaries,
+        )
+    return optimized_stats, quality_meta, lod_results
+
+
 @router.post("/optimize", response_model=OptimizeResponse)
 async def optimize_mesh(request: OptimizeRequest):
     job = _get_job(request.job_id)
@@ -290,68 +330,34 @@ async def optimize_mesh(request: OptimizeRequest):
     output_path = output_dir / output_filename
 
     try:
-        # Run optimization in an isolated subprocess to prevent Torch/PyMeshLab C++ segfaults/deadlocks
-        import sys
-        
-        args = [
-            sys.executable, "-m", "model.engine.worker",
-            "--job", request.job_id,
-            "--input", str(input_path),
-            "--output", str(output_path),
-            "--target", str(target_faces),
-            "--out-dir", str(output_dir),
-            "--base-name", base_name,
-            "--out-ext", output_ext,
-            "--original-faces", str(original_stats.face_count),
-            "--max-dev", str(request.max_deviation_percent),
-            "--max-over", str(request.max_target_overshoot_percent)
-        ]
-        if request.preserve_normals: args.append("--preserve-normals")
-        if request.preserve_boundaries: args.append("--preserve-boundaries")
-        if request.generate_lods: args.append("--generate-lods")
-        if request.strict_quality: args.append("--strict-quality")
+        import functools
+        loop = asyncio.get_running_loop()
 
-        process = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+        # Run the synchronous decimation in a thread pool to avoid blocking the event loop.
+        # This also isolates any segfault-prone C++ library crashes to the thread.
+        logger.info("Starting inline decimation (thread pool)")
+
+        from .schemas import TextureExportInfo
+
+        optimized_stats, quality_meta, lod_results = await loop.run_in_executor(
+            None,
+            functools.partial(
+                _run_decimation,
+                input_path=str(input_path),
+                output_path=str(output_path),
+                target_faces=target_faces,
+                preserve_normals=request.preserve_normals,
+                preserve_boundaries=request.preserve_boundaries,
+                strict_quality=request.strict_quality,
+                max_deviation_percent=request.max_deviation_percent,
+                max_target_overshoot_percent=request.max_target_overshoot_percent,
+                generate_lods=request.generate_lods,
+                out_dir=str(output_dir),
+                base_name=base_name,
+                out_ext=output_ext,
+                original_faces=original_stats.face_count,
+            ),
         )
-        
-        stdout, stderr = await process.communicate()
-        
-        if process.returncode != 0:
-            logger.error(f"Worker failed: stdout={stdout.decode()} stderr={stderr.decode()}")
-            raise Exception(f"Optimization worker failed: stdout={stdout.decode()} stderr={stderr.decode()}")
-            
-        try:
-            # We look for the JSON output in stdout (it might have PyMeshLab logs before it)
-            # Find the last line that looks like our JSON
-            lines = stdout.decode().strip().split('\n')
-            json_str = lines[-1]
-            for line in reversed(lines):
-                if line.startswith('{"status":'):
-                    json_str = line
-                    break
-            result = json.loads(json_str)
-            
-            if result.get("status") != "success":
-                raise Exception(result.get("error", "Unknown error in worker"))
-                
-            optimized_stats_dict = result["optimized_stats"]
-            quality_meta = result["quality_meta"]
-            lod_results_dict = result.get("lod_results")
-            
-            # Reconstruct MeshStats from dict
-            from .schemas import MeshStats, LODResult
-            optimized_stats = MeshStats(**optimized_stats_dict)
-            if lod_results_dict:
-                lod_results = [LODResult(**d) for d in lod_results_dict]
-            else:
-                lod_results = None
-                
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse worker output: {stdout.decode()} \nStderr: {stderr.decode()}")
-            raise Exception(f"Worker returned invalid JSON: {str(e)}")
 
         processing_time = round(time.time() - start_time, 2)
         reduction = 0.0
@@ -402,9 +408,7 @@ async def optimize_mesh(request: OptimizeRequest):
         if request.strict_quality:
             quality_deviation = quality_meta.get("quality_deviation_percent")
             if quality_meta.get("quality_guard_relaxed"):
-                message += (
-                    " | Quality lock adjusted target to preserve structure"
-                )
+                message += " | Quality lock adjusted target to preserve structure"
             if quality_deviation is not None:
                 message += f" | deviation={quality_deviation}%"
             if not quality_meta.get("quality_guard_satisfied", True):
@@ -417,8 +421,6 @@ async def optimize_mesh(request: OptimizeRequest):
             message += " | face target increased above latest output, so optimization restarted from original mesh"
         elif source_reason == "fallback_to_original_for_high_target":
             message += " | face target is near original budget, so optimization used original mesh"
-
-        from .schemas import TextureExportInfo
 
         texture_export_info = quality_meta.get("texture_export_info")
         if isinstance(texture_export_info, dict):
@@ -452,11 +454,15 @@ async def optimize_mesh(request: OptimizeRequest):
         )
 
     except Exception as e:
+        import traceback as _tb
+        tb_str = _tb.format_exc()
+        error_detail = str(e) or tb_str or "Unknown error (empty exception)"
+        logger.error(f"Optimization failed: {error_detail}")
         jobs[request.job_id]["status"] = "failed"
         jobs[request.job_id]["stage"] = "Error"
-        jobs[request.job_id]["error"] = str(e)
+        jobs[request.job_id]["error"] = error_detail
         _save_job(request.job_id)
-        raise HTTPException(422, f"Optimization failed: {str(e)}")
+        raise HTTPException(422, f"Optimization failed: {error_detail}")
 
 
 @router.post("/feedback", response_model=FeedbackResponse)

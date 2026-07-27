@@ -61,7 +61,13 @@ def compute_edge_persistence(
 
     vertices = np.asarray(mesh.vertices)
     faces = np.asarray(mesh.faces)
-
+    curvature = np.asarray(curvature, dtype=np.float64)
+    
+    if len(vertices) != len(curvature):
+        raise ValueError(
+            f"Vertex count ({len(vertices)}) != curvature length ({len(curvature)})"
+        )
+    
     # Build filtration
     simplices = build_lower_star_filtration(vertices, faces, curvature)
 

@@ -42,7 +42,13 @@ def build_lower_star_filtration(
     for v_idx in range(len(vertices)):
         simplices.append(([v_idx], float(curvature[v_idx])))
 
-    # Vectorized 1-simplices (edges) and 2-simplices (faces)
+    # Guard against out-of-bounds face indices
+    faces = np.asarray(faces)
+    if len(faces) == 0:
+        return simplices
+    if faces.max() >= len(curvature) or faces.min() < 0:
+        raise ValueError(f"Face indices out of bounds: max={faces.max()}, min={faces.min()}, vertices={len(curvature)}")
+
     faces_c = curvature[faces]  # shape (F, 3)
     
     # 2-simplices (faces): max curvature among its 3 vertices
