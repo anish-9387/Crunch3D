@@ -373,26 +373,13 @@ function ImportanceLegend() {
     { label: 'Low', color: '#0000ff' },
   ]
   return (
-    <div style={{
-      position: 'absolute',
-      bottom: 12,
-      right: 12,
-      background: 'rgba(0,0,0,0.65)',
-      borderRadius: 8,
-      padding: '8px 14px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 4,
-      fontSize: 12,
-      fontFamily: 'monospace',
-      color: '#eee',
-      pointerEvents: 'none',
-      zIndex: 10,
-    }}>
-      <div style={{ fontWeight: 700, marginBottom: 2, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>Importance</div>
+    <div className="viewer-legend">
+      <div className="viewer-legend-title">Importance</div>
       {items.map((item) => (
-        <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: 3, background: item.color }} />
+        <div key={item.label} className="viewer-legend-row">
+          {/* Swatches are the shader's vertex-colour ramp, not theme colours —
+              they must stay fixed so the legend keeps describing the mesh. */}
+          <span className="viewer-legend-swatch" style={{ background: item.color }} />
           <span>{item.label}</span>
         </div>
       ))}

@@ -12,9 +12,8 @@ from pydantic import BaseModel
 
 from .schemas import (
     UploadResponse, OptimizeRequest, OptimizeResponse, JobStatus,
-    FeedbackRequest, FeedbackResponse, TrainingSummaryResponse, TrainingBootstrapResponse,
     OptimizationRecommendationResponse,
-    MeshStats,
+    MeshStats, EdgeFeatureStat, EdgeFeatureSummary,
 )
 from ..services.file_handler import (
     generate_job_id, get_upload_path, get_processed_path,
@@ -22,13 +21,8 @@ from ..services.file_handler import (
 )
 from ..services.mesh_analyzer import analyze_mesh
 from ..engine.mesh_optimizer import decimate_mesh, generate_lods, resolve_output_extension
-from ..services.feedback_trainer import (
-    record_optimization_event,
-    record_feedback_event,
-    get_training_summary,
-    bootstrap_preference_model,
-    find_preference_profile,
-)
+from ..services.optimization_events import record_optimization_event
+from ..importance.edge_features import FEATURE_METADATA, FEATURE_WEIGHTS
 
 router = APIRouter(prefix="/api", tags=["mesh"])
 
@@ -144,6 +138,43 @@ def _get_job(job_id: str) -> dict:
     raise HTTPException(404, "Job not found")
 
 
+def _build_edge_feature_summary(raw: dict | None) -> EdgeFeatureSummary | None:
+    """Attach label/group/description/weight to the optimizer's raw cue stats.
+
+    The optimizer only reports numbers; the presentation metadata lives in
+    ``edge_features`` so the API and UI stay in step with the cue definitions.
+    Unknown keys are skipped rather than guessed at, so adding a cue to the
+    engine without describing it degrades to omission instead of a 500.
+    """
+    if not raw:
+        return None
+
+    stats: list[EdgeFeatureStat] = []
+    for item in raw.get("features", []):
+        key = item.get("name")
+        meta = FEATURE_METADATA.get(key)
+        if meta is None:
+            logger.warning("Edge cue %r has no presentation metadata; omitting", key)
+            continue
+        stats.append(EdgeFeatureStat(
+            key=key,
+            label=meta["label"],
+            group=meta["group"],
+            description=meta["description"],
+            present=bool(item.get("present", False)),
+            weight=float(FEATURE_WEIGHTS.get(key, 0.0)),
+            min=float(item.get("min", 0.0)),
+            max=float(item.get("max", 0.0)),
+            mean=float(item.get("mean", 0.0)),
+        ))
+
+    return EdgeFeatureSummary(
+        enabled=bool(raw.get("enabled", False)),
+        edge_count=int(raw.get("edge_count", 0)),
+        features=stats,
+    )
+
+
 def _risk_level(face_count: int) -> str:
     if face_count < 50000:
         return "safe"
@@ -190,11 +221,6 @@ def _recommend_for_stats(face_count: int, file_size_mb: float) -> tuple[str, int
     risk_level = _risk_level(face_count)
 
     return preset, target_faces, enable_performance_mode, risk_level, reasons
-
-
-def _preset_for_target(target_faces: int) -> str:
-    closest = min(PRESET_TARGETS.items(), key=lambda item: abs(item[1] - target_faces))
-    return closest[0]
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -384,6 +410,7 @@ async def optimize_mesh(request: OptimizeRequest):
         jobs[request.job_id]["has_importance_map"] = quality_meta.get("importance_scores") is not None
         if quality_meta.get("importance_scores") is not None:
             jobs[request.job_id]["importance_scores"] = quality_meta["importance_scores"]
+        jobs[request.job_id]["edge_features"] = quality_meta.get("edge_features")
 
         texture_export_info = quality_meta.get("texture_export_info")
         if texture_export_info is not None:
@@ -450,6 +477,7 @@ async def optimize_mesh(request: OptimizeRequest):
             has_animation_map=quality_meta.get("original_has_animation", False),
             is_animated=quality_meta.get("original_has_animation", False),
             texture_export=texture_export_info,
+            edge_features=_build_edge_feature_summary(quality_meta.get("edge_features")),
             message=message,
         )
 
@@ -465,44 +493,6 @@ async def optimize_mesh(request: OptimizeRequest):
         raise HTTPException(422, f"Optimization failed: {error_detail}")
 
 
-@router.post("/feedback", response_model=FeedbackResponse)
-async def submit_feedback(request: FeedbackRequest):
-    job = _get_job(request.job_id)
-    if job.get("status") != "completed":
-        raise HTTPException(400, "Feedback can be submitted after optimization completes")
-
-    optimization_snapshot = {
-        "optimize_request": job.get("optimize_request"),
-        "original_stats": job.get("original_stats").model_dump() if job.get("original_stats") else None,
-        "optimized_stats": job.get("optimized_stats").model_dump() if job.get("optimized_stats") else None,
-        "reduction_percent": job.get("reduction_percent"),
-        "processing_time_seconds": job.get("processing_time_seconds"),
-        "quality_guard_relaxed": job.get("quality_guard_relaxed"),
-        "quality_guard_satisfied": job.get("quality_guard_satisfied"),
-    }
-
-    recommendations = record_feedback_event(
-        feedback=request,
-        optimization_snapshot=optimization_snapshot,
-    )
-
-    return FeedbackResponse(
-        job_id=request.job_id,
-        saved=True,
-        recommendations=recommendations,
-    )
-
-
-@router.get("/training/summary", response_model=TrainingSummaryResponse)
-async def training_summary():
-    return TrainingSummaryResponse(**get_training_summary())
-
-
-@router.post("/training/bootstrap", response_model=TrainingBootstrapResponse)
-async def training_bootstrap():
-    return TrainingBootstrapResponse(**bootstrap_preference_model())
-
-
 @router.get("/recommend/{job_id}", response_model=OptimizationRecommendationResponse)
 async def recommend_optimization(job_id: str, from_latest: bool = False):
     job = _get_job(job_id)
@@ -512,32 +502,10 @@ async def recommend_optimization(job_id: str, from_latest: bool = False):
     if stats is None:
         raise HTTPException(400, "No mesh stats available for recommendation")
 
-    optimize_request = job.get("optimize_request") or {}
-    desired_output = optimize_request.get("desired_output") or {}
-    use_case = desired_output.get("use_case") or "general"
-    quality_priority = desired_output.get("quality_priority") or "balanced"
-
-    profile = find_preference_profile(use_case=use_case, quality_priority=quality_priority)
-    if profile and int(profile.get("sample_count", 0)) > 0:
-        learned_target = int(profile.get("recommended_target_faces", PRESET_TARGETS["hero_standard"]))
-        learned_target = max(8000, min(learned_target, max(stats.face_count - 1, 8000)))
-        preset = _preset_for_target(learned_target)
-        target_faces = learned_target
-        performance_mode = stats.face_count > 50000 or stats.file_size_mb > 15
-        risk_level = _risk_level(stats.face_count)
-        reasons = [
-            (
-                f"Learned from positive feedback profile: "
-                f"{profile.get('use_case', 'general')} / {profile.get('quality_priority', 'balanced')} "
-                f"(samples={profile.get('sample_count', 0)})."
-            ),
-            "Recommendation adapted from saved user-approved outputs.",
-        ]
-    else:
-        preset, target_faces, performance_mode, risk_level, reasons = _recommend_for_stats(
-            face_count=stats.face_count,
-            file_size_mb=stats.file_size_mb,
-        )
+    preset, target_faces, performance_mode, risk_level, reasons = _recommend_for_stats(
+        face_count=stats.face_count,
+        file_size_mb=stats.file_size_mb,
+    )
 
     source = "optimized" if use_latest else "original"
     return OptimizationRecommendationResponse(

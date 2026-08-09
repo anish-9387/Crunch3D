@@ -59,6 +59,30 @@ class TextureExportInfo(BaseModel):
     warnings: list[str] = []
 
 
+class EdgeFeatureStat(BaseModel):
+    """Summary of one of the 19 edge-importance cues.
+
+    ``present`` is False when the mesh lacks the data a cue needs (no UVs, no
+    skinning, no vertex colours), in which case the cue contributed nothing to
+    the importance map and the statistics are all zero.
+    """
+    key: str
+    label: str
+    group: str
+    description: str
+    present: bool
+    weight: float
+    min: float
+    max: float
+    mean: float
+
+
+class EdgeFeatureSummary(BaseModel):
+    enabled: bool
+    edge_count: int
+    features: list[EdgeFeatureStat]
+
+
 class OptimizeResponse(BaseModel):
     job_id: str
     original_stats: MeshStats
@@ -78,6 +102,7 @@ class OptimizeResponse(BaseModel):
     has_animation_map: bool = False
     is_animated: bool = False
     texture_export: Optional[TextureExportInfo] = None
+    edge_features: Optional[EdgeFeatureSummary] = None
     message: str
 
 
@@ -87,38 +112,6 @@ class JobStatus(BaseModel):
     progress: int  # 0-100
     stage: Optional[str] = None
     error: Optional[str] = None
-
-
-class FeedbackRequest(BaseModel):
-    job_id: str
-    satisfied: bool
-    preserve_shape: bool
-    preserve_vertices: bool
-    preserve_faces: bool
-    rating: Optional[int] = Field(default=None, ge=1, le=5)
-    issues: Optional[list[str]] = None
-    notes: Optional[str] = None
-
-
-class FeedbackResponse(BaseModel):
-    job_id: str
-    saved: bool
-    recommendations: list[str]
-
-
-class TrainingSummaryResponse(BaseModel):
-    total_optimization_events: int
-    total_feedback_events: int
-    positive_feedback: int
-    negative_feedback: int
-    top_negative_issues: list[str]
-    suggested_focus_areas: list[str]
-
-
-class TrainingBootstrapResponse(BaseModel):
-    generated_at_utc: str
-    training_samples_used: int
-    profiles: list[dict]
 
 
 class OptimizationRecommendationResponse(BaseModel):

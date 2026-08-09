@@ -64,39 +64,6 @@ export function getPreviewUrl(jobId) {
   return `${API_BASE}/preview/${jobId}?t=${t}`;
 }
 
-export async function submitFeedback({
-  jobId,
-  satisfied,
-  preserveShape,
-  preserveVertices,
-  preserveFaces,
-  rating,
-  issues,
-  notes,
-}) {
-  const response = await api.post("/feedback", {
-    job_id: jobId,
-    satisfied,
-    preserve_shape: preserveShape,
-    preserve_vertices: preserveVertices,
-    preserve_faces: preserveFaces,
-    rating: rating ?? null,
-    issues: issues || [],
-    notes: notes || null,
-  });
-  return response.data;
-}
-
-export async function getTrainingSummary() {
-  const response = await api.get("/training/summary");
-  return response.data;
-}
-
-export async function bootstrapTrainingModel() {
-  const response = await api.post("/training/bootstrap");
-  return response.data;
-}
-
 export async function getOptimizationRecommendation(jobId, fromLatest = false) {
   const response = await api.get(`/recommend/${jobId}`, {
     params: { from_latest: fromLatest },

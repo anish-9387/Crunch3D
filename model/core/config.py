@@ -23,6 +23,11 @@ ENABLE_GNN_IMPORTANCE: bool = True
 ENABLE_TEXTURE_REALLOCATION: bool = True
 """Enable persistence-gated texture reallocation (§IV-C)."""
 
+ENABLE_EDGE_FEATURES: bool = True
+"""Enable the 19-cue edge-feature importance descriptor.  Requires `numpy`
+and is the only edge-importance source when `ENABLE_GNN_IMPORTANCE` is off.
+When disabled, edge protection falls back to GNN / QEM only."""
+
 
 # ── Paper hyperparameters ───────────────────────────────────────────────────
 
@@ -37,6 +42,15 @@ KAPPA: float = 1.0
    Cost(σ) = Cost_QEM(σ) · (1 + κ · ŷ_σ)
    Higher → GNN has more influence over collapse ordering.
 """
+
+KAPPA_EDGE: float = 0.75
+"""Edge-feature cost modulation strength (edge-protection analogue of Eq. 2):
+
+   Cost(σ) = Cost_QEM(σ) · (1 + κ_edge · ī_edge)
+
+where ī_edge is the fused 19-cue edge importance in [0, 1].  Higher values
+protect sharp creases, silhouettes, UV seams and rig-deformed regions more
+aggressively during decimation."""
 
 GAMMA: float = 1.5
 """Texel density exponent (Eq. 3):

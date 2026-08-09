@@ -32,8 +32,19 @@ from ..api.schemas import MeshStats, LODResult
 from ..importance.importance_mapper import compute_importance
 from ..importance.uv_density import has_uvs as _detect_uvs
 from ..importance.animation_awareness import has_animation_data
+from ..importance.edge_features import (
+    FEATURE_NAMES,
+    compute_edge_feature_importance,
+    scatter_to_vertices,
+)
 
-from ..core.config import ENABLE_GNN_IMPORTANCE, ENABLE_PERSISTENCE_GATE, KAPPA
+from ..core.config import (
+    ENABLE_EDGE_FEATURES,
+    ENABLE_GNN_IMPORTANCE,
+    ENABLE_PERSISTENCE_GATE,
+    KAPPA,
+    KAPPA_EDGE,
+)
 from ..learning.inference import predict_edge_importance
 from ..topology.persistence import compute_edge_persistence
 from ..topology.gate import admissible_edges
@@ -472,6 +483,65 @@ def _inject_importance_as_quality(ms: pymeshlab.MeshSet, importance: np.ndarray)
                 pass
 
 
+def _apply_edge_feature_protection(
+    mesh: trimesh.Trimesh, base_importance: np.ndarray
+) -> tuple[np.ndarray, dict | None]:
+    """Apply the 19-cue edge-feature protection term to vertex importance.
+
+    Computes the fused per-edge importance, collapses it onto vertices (max
+    over incident edges), then applies the Eq. 2-style modulation:
+
+        importance[v] *= (1 + KAPPA_EDGE * ī_edge_max[v])
+
+    The result is rescaled back into ``[0, 1]`` when the boost pushes it past
+    1.0. That rescale matters: ``_inject_importance_as_quality`` clips to
+    ``[0, 1]`` before quantising to a colour byte, so leaving values above 1.0
+    would flatten every protected vertex onto the same quality and destroy the
+    very ordering this term establishes. The same array is also published as
+    ``importance_scores`` for the viewer heatmap, which assumes ``[0, 1]``.
+    Rescaling is a single monotonic division, so relative ordering — the only
+    thing QEM consumes — is untouched.
+
+    Returns ``(modulated_importance, edge_feature_summary)``. The summary is
+    ``None`` when the feature path is disabled, the mesh is empty, the length
+    of ``base_importance`` does not match the vertex count, or the descriptor
+    raised — in every one of those cases ``base_importance`` is returned
+    unchanged so decimation behaves exactly as it did before this stage
+    existed.
+    """
+    if not ENABLE_EDGE_FEATURES:
+        return base_importance, None
+    if len(mesh.faces) == 0 or len(mesh.vertices) == 0:
+        return base_importance, None
+    if len(base_importance) != len(mesh.vertices):
+        logger.warning("Edge-feature skip: importance %d != verts %d",
+                       len(base_importance), len(mesh.vertices))
+        return base_importance, None
+    try:
+        result = compute_edge_feature_importance(
+            mesh, vertex_importance=base_importance
+        )
+        if result.importance.size == 0:
+            return base_importance, result.summary
+
+        vert_map = scatter_to_vertices(result, len(mesh.vertices))
+        protected = base_importance * (1.0 + KAPPA_EDGE * vert_map)
+
+        peak = float(np.max(protected)) if protected.size else 0.0
+        if peak > 1.0:
+            protected = protected / peak
+
+        logger.info(
+            "Applied edge-feature protection (per-edge mean %.4f, %d edges).",
+            float(np.mean(result.importance)),
+            len(result.edges),
+        )
+        return protected, result.summary
+    except Exception as e:
+        logger.warning("Edge-feature protection failed, continuing: %s", e)
+        return base_importance, None
+
+
 def _decimate_component(
     mesh: trimesh.Trimesh,
     target_faces: int,
@@ -554,8 +624,14 @@ def _decimate_component(
                     logger.info("Applied GNN importance scoring.")
                 except Exception as e:
                     logger.warning("GNN importance failed, falling back to base heuristics: %s", e)
-            
-            # 2. Persistence Gate
+
+            # 2. Edge-feature protection (19-cue descriptor, Eq. 2 analogue)
+            if ENABLE_EDGE_FEATURES:
+                base_importance, _ = _apply_edge_feature_protection(
+                    tmp_trimesh, base_importance
+                )
+
+            # 3. Persistence Gate
             if ENABLE_PERSISTENCE_GATE:
                 try:
                     # Use base_importance (curvature proxy) for filtration
@@ -724,6 +800,51 @@ def _sample_vertices(vertices: np.ndarray, max_count: int) -> np.ndarray:
     return vertices[indices]
 
 
+def _summarize_edge_features(per_component: list[dict]) -> dict | None:
+    """Merge per-component edge-feature summaries into one JSON-safe meta block.
+
+    Cues are emitted in ``FEATURE_NAMES`` order rather than dict-insertion
+    order so the API response — and therefore the UI — lists them identically
+    for every mesh. A cue counts as ``present`` when *any* component had the
+    data for it, since a mesh can mix UV-mapped and bare components.
+    """
+    if not per_component:
+        return None
+
+    by_name: dict[str, list[dict]] = {}
+    for summary in per_component:
+        for item in summary.get("features", []):
+            by_name.setdefault(item["name"], []).append(item)
+
+    features: list[dict] = []
+    for name in FEATURE_NAMES:
+        items = by_name.get(name)
+        if not items:
+            continue
+        features.append({
+            "name": name,
+            "mean": round(sum(i.get("mean", 0.0) for i in items) / len(items), 4),
+            "min": round(min(i.get("min", 0.0) for i in items), 4),
+            "max": round(max(i.get("max", 0.0) for i in items), 4),
+            "present": any(i.get("present", False) for i in items),
+        })
+
+    edge_count = int(sum(s.get("edge_count", 0) for s in per_component))
+    means = [s.get("importance", {}).get("mean", 0.0) for s in per_component]
+    imp_stats = {
+        "mean": round(sum(means) / len(means), 4),
+        "min": round(min(s.get("importance", {}).get("min", 0.0) for s in per_component), 4),
+        "max": round(max(s.get("importance", {}).get("max", 0.0) for s in per_component), 4),
+    }
+    return {
+        "enabled": bool(ENABLE_EDGE_FEATURES),
+        "components": len(per_component),
+        "edge_count": edge_count,
+        "features": features,
+        "importance": imp_stats,
+    }
+
+
 def _build_quality_reference(components: list[trimesh.Trimesh]) -> dict | None:
     all_vertices = np.vstack([np.asarray(c.vertices, dtype=np.float64)
                                for c in components if len(c.vertices) > 0])
@@ -863,6 +984,9 @@ def decimate_mesh(
             "quality_guard_relaxed": False,
             "quality_guard_satisfied": True,
             "importance_scores": None,
+            # Nothing was decimated, so no cues were computed — but the key must
+            # exist so every caller sees one shape of result dict.
+            "edge_features": None,
             "texture_export_info": {
                 "texture_preserved": original_has_textures,
                 "texture_loss_reason": None,
@@ -877,17 +1001,23 @@ def decimate_mesh(
 
     # ── 3. Precompute importance once per component (cached for retries) ──
     component_importance: list[np.ndarray] | None = None
+    edge_features_meta: list[dict] = []
     flat_importance: list[float] = []
     if use_importance:
         component_importance = []
         for c in components:
             if len(c.faces) == 0:
                 component_importance.append(np.array([], dtype=np.float64))
-            else:
-                imp = compute_importance(c)
-                component_importance.append(imp)
-                flat_importance.extend(imp.tolist())
+                continue
+            imp = compute_importance(c)
+            if ENABLE_EDGE_FEATURES:
+                imp, edge_summary = _apply_edge_feature_protection(c, imp)
+                if edge_summary is not None:
+                    edge_features_meta.append(edge_summary)
+            component_importance.append(imp)
+            flat_importance.extend(imp.tolist())
     importance_scores = flat_importance if flat_importance else None
+    edge_features_summary = _summarize_edge_features(edge_features_meta)
 
     # ── 4. Inter-retry importance cache (post-preclean, keyed by id) ────
     _importance_cache: dict[int, np.ndarray] = {}
@@ -945,6 +1075,7 @@ def decimate_mesh(
                 "quality_guard_relaxed": candidate_target != requested_target,
                 "quality_guard_satisfied": True,
                 "importance_scores": importance_scores,
+                "edge_features": edge_features_summary,
                 "texture_export_info": texture_export_info,
                 "original_has_textures": original_has_textures,
                 "original_has_animation": original_has_animation,
@@ -964,6 +1095,7 @@ def decimate_mesh(
         "quality_guard_relaxed": last_target != requested_target,
         "quality_guard_satisfied": quality_guard_satisfied,
         "importance_scores": importance_scores,
+        "edge_features": edge_features_summary,
         "texture_export_info": texture_export_info,
         "original_has_textures": original_has_textures,
         "original_has_animation": original_has_animation,
@@ -1004,8 +1136,13 @@ def generate_lods(
         for c in components:
             if len(c.faces) == 0:
                 component_importance.append(np.array([], dtype=np.float64))
-            else:
-                component_importance.append(compute_importance(c))
+                continue
+            imp = compute_importance(c)
+            # Same protection the single-target path applies, so every LOD level
+            # preserves the same creases, seams and silhouettes.
+            if ENABLE_EDGE_FEATURES:
+                imp, _ = _apply_edge_feature_protection(c, imp)
+            component_importance.append(imp)
 
     # Inter-retry cache shared across LOD levels
     _importance_cache: dict[int, np.ndarray] = {}

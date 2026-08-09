@@ -29,7 +29,7 @@ mesh.py (router)
   │   ├── importance_mapper.py — Per-vertex importance
   │   │   └── curvature.py    — Fast/accurate curvature
   │   └── pymeshlab            — QEM edge collapse
-  └── feedback_trainer.py     — Logging, preference model
+  └── optimization_events.py  — Run outcome logging, recommendations
 ```
 
 ### 2.2 Critical Architecture Flaws
@@ -532,21 +532,6 @@ CREATE TABLE importance_maps (
     method      TEXT NOT NULL,                      -- 'v1_weighted', 'learned_v2', etc.
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-
--- Feedback
-CREATE TABLE feedback (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_id          TEXT NOT NULL REFERENCES jobs(job_id),
-    optimization_id INTEGER REFERENCES optimizations(id),
-    satisfied       BOOLEAN NOT NULL,
-    preserve_shape  BOOLEAN NOT NULL,
-    preserve_vertices BOOLEAN NOT NULL,
-    preserve_faces  BOOLEAN NOT NULL,
-    rating          INTEGER,
-    issues          TEXT,                           -- JSON array
-    notes           TEXT,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
 ```
 
 ### 8.5 API Contracts (Extended)
@@ -558,8 +543,7 @@ CREATE TABLE feedback (
 | GET | `/api/status/{job_id}` | Basic status | Detailed: progress%, stage, ETA |
 | GET | `/api/download/{job_id}` | Single OBJ or ZIP | Multi-format, multi-file |
 | GET | `/api/preview/{job_id}` | Stream file | Same + WebSocket progress |
-| POST | `/api/feedback` | Same | Enhanced with component-level ratings |
-| POST | `/api/training/bootstrap` | Same | V2 model training |
+| GET | `/api/importance/{job_id}` | Per-vertex importance map | Same + per-edge cue breakdown |
 | GET | `/api/recommend/{job_id}` | Basic heuristic | ML-based recommendation |
 | **NEW** | `WS /api/ws/{job_id}` | — | Real-time progress + intermediate preview |
 | **NEW** | `POST /api/importance/learn` | — | Trigger model re-training |

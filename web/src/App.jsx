@@ -46,8 +46,15 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [path])
 
+  const openHome = useCallback(() => {
+    if (path === '/') return
+    window.history.pushState({}, '', '/')
+    setPath('/')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [path])
+
   if (path === DEMO_PATH) {
-    return <DemoApp />
+    return <DemoApp onBackToHome={openHome} />
   }
 
   return <LandingPage onTryDemo={openDemo} onGenerateLods={openDemo} />

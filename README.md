@@ -48,7 +48,34 @@ Surface curvature analysis (mean curvature via cotangent Laplacian) generates pe
 The importance map is visualized in the 3D viewer as a color-coded heatmap overlay (red = high importance, blue = low importance).
 
 ### GNN Edge Importance Prediction
-A **Graph Attention Network (GATConv)** predicts per-edge importance scores from local geometric features (dihedral angle, edge length, curvature, face normals). The GNN is trained on user feedback signals to align importance predictions with human perceptual priorities. The predicted scores modulate the QEM collapse cost.
+A **Graph Attention Network (GATConv)** predicts per-edge importance scores from the 19-cue edge feature vector (see below). The GNN is trained self-supervised against geometric error targets, so no human labelling is required. The predicted scores modulate the QEM collapse cost.
+
+### 19-Cue Edge Feature Extraction
+Every candidate edge is described by a fixed-length, fixed-order feature vector computed in `importance/edge_features.py`. The cues span geometry, appearance, rigging and view-dependence:
+
+| # | Cue | What it captures |
+|---|-----|------------------|
+| 1 | Edge Length | Normalized length; short edges collapse cheaply |
+| 2 | Curvature | Local principal-curvature magnitude |
+| 3 | Mean Curvature | Average of principal curvatures (H) |
+| 4 | Gaussian Curvature | Product of principal curvatures (K) |
+| 5 | Dihedral Angle | Fold angle between the two adjacent faces |
+| 6 | Surface Normal Difference | Normal divergence across the edge |
+| 7 | Material Boundary | Edge separates two material groups |
+| 8 | UV Seam | Edge lies on a texture-coordinate discontinuity |
+| 9 | Bone Weight Difference | Skin-weight divergence across the edge |
+| 10 | Texture Gradient | Local texel-space intensity gradient |
+| 11 | Ambient Occlusion | Local occlusion / crevice darkening |
+| 12 | Vertex Color Difference | Baked vertex-colour discontinuity |
+| 13 | Sharp Edge Flag | Dihedral angle above the sharp threshold |
+| 14 | Boundary Edge Flag | Edge borders a hole (single adjacent face) |
+| 15 | Surface Area Contribution | Share of total surface area the edge supports |
+| 16 | Screen-space Importance | Projected size under the reference camera |
+| 17 | Visibility Score | How often the edge is visible from outside |
+| 18 | Silhouette Score | Likelihood of sitting on an outline |
+| 19 | Animation Influence | Overlap with detected deformation zones |
+
+Cues that need data a mesh does not carry (no UVs, no skin weights, no vertex colours) degrade to a neutral value rather than failing, so the vector is always well-formed. Features are cached per mesh and reused by the importance mapper, the GNN and the API summary.
 
 ### Persistent Homology Topological Gating
 Using **Gudhi**, the system computes persistent homology of the lower-star filtration of the mesh. Edges with persistence below a configurable threshold $\tau_{topo}$ are deemed topologically admissible for collapse. This prevents the decimator from destroying important topological features during simplification.
@@ -95,11 +122,11 @@ One click. All four levels. Packaged as a ZIP.
 - Split view - original vs optimized, synchronized controls
 - Model Inspector panel: scene graph, transform data, bounding box, camera info
 
-### User Feedback & Preference Learning
-After optimization, users can submit feedback: satisfaction rating, shape/vertex/face preservation flags, issue tags, and free-text notes. Feedback is recorded as training events, and a **preference model** is bootstrapped to learn per-profile optimization preferences. The model powers the **recommendation engine** that suggests presets and settings for future uploads.
+### Optimization Event Logging
+Every completed optimization is recorded as a training event with its measured outcome: face reduction, surface deviation, quality-guard retries and timings. These events are derived from the run itself, so the log builds automatically without any user input.
 
 ### Recommendation Engine
-Based on mesh characteristics (face count, file size) and learned preference profiles, the system recommends a preset, target face count, performance mode, and risk level for each uploaded mesh.
+Based on mesh characteristics (face count, file size) and the logged outcomes of previous runs, the system recommends a preset, target face count, performance mode, and risk level for each uploaded mesh.
 
 ### Export Pipeline
 - Single optimized mesh download
@@ -146,16 +173,18 @@ graph TB
         MV[ModelViewer.jsx\nThree.js canvas\nImportance heatmap]
         MI[ModelInspector.jsx\nStats · scene graph]
         PS[PresetSelector.jsx\nPresets · slider · options]
-        SP[StatsPanel.jsx\nBefore/after · feedback · download]
+        SP[StatsPanel.jsx\nBefore/after · edge cues · download]
+        EF[EdgeFeaturePanel.jsx\n19-cue readout]
         API[api/client.js\nAxios]
     end
 
     subgraph Backend["FastAPI - localhost:8000"]
-        R[routes.py\nUpload · Optimize · Feedback]
+        R[routes.py\nUpload · Optimize · Download]
         FH[file_handler.py\nJob IDs · cleanup]
         MA[mesh_analyzer.py\nStats extraction]
         MO[mesh_optimizer.py\nWeighted QEM · guard · LODs]
-        FT[feedback_trainer.py\nPreference model]
+        OE[optimization_events.py\nRun outcome log]
+        EFX[edge_features.py\n19-cue extraction]
         IM[importance_mapper.py\nMulti-cue importance]
         SCH[schemas.py\nPydantic models]
     end
@@ -180,18 +209,20 @@ graph TB
     FU -->|POST /api/upload| API
     PS -->|POST /api/optimize| API
     MV -->|GET /api/preview| API
-    SP -->|POST /api/feedback| API
     SP -->|GET /api/download| API
+    SP --> EF
 
     API --> R
     R --> FH
     R --> MA
     R --> MO
-    R --> FT
+    R --> OE
     R --> IM
     MO --> PML & TM & NP & SC
     MO --> IM
     IM --> CURV & UV & ANIM
+    IM --> EFX
+    EFX --> GNN
     MO --> GNN
     MO --> PERS
     GNN --> TCH
@@ -232,9 +263,7 @@ sequenceDiagram
     Client->>FastAPI: GET /api/preview/{job_id}
     FastAPI-->>Client: stream mesh file → Three.js
 
-    Client->>FastAPI: POST /api/feedback (job_id + ratings)
-    FastAPI->>FastAPI: record event → update preference model
-    FastAPI-->>Client: saved · recommendations
+    FastAPI->>FastAPI: log run outcome → refresh recommendations
 
     Client->>FastAPI: GET /api/download/{job_id}
     FastAPI-->>Client: optimized file or LOD ZIP
@@ -246,13 +275,10 @@ sequenceDiagram
 | `GET` | `/health` | Health check |
 | `POST` | `/api/upload` | Upload mesh file, returns `job_id` + `MeshStats` |
 | `GET` | `/api/recommend/{job_id}` | Get optimization recommendation (preset, target, risk) |
-| `POST` | `/api/optimize` | Run weighted-QEM decimation + quality guard |
+| `POST` | `/api/optimize` | Run weighted-QEM decimation + quality guard; response includes the 19-cue `edge_features` summary |
 | `GET` | `/api/status/{job_id}` | Status: uploaded / processing / completed / failed |
 | `GET` | `/api/preview/{job_id}` | Stream mesh for the Three.js viewer |
 | `GET` | `/api/importance/{job_id}` | Get per-vertex importance scores |
-| `POST` | `/api/feedback` | Submit user satisfaction feedback |
-| `GET` | `/api/training/summary` | Training metrics: events, feedback ratio, top issues |
-| `POST` | `/api/training/bootstrap` | Train / refresh preference model from logged events |
 | `GET` | `/api/download/{job_id}` | Download optimized file or multi-LOD ZIP |
 | `DELETE` | `/api/job/{job_id}` | Delete job and clean up temp files |
 
@@ -291,14 +317,14 @@ Crunch3D is being built toward **production readiness** - a complete understandi
 - **Multi-cue importance** (curvature, UV density, animation zones, GNN predictions)
 - **Topological guarantees** (persistent homology gating)
 - **Quality assurance** (surface deviation retry loop)
-- **Human-in-the-loop learning** (feedback → preference model → recommendations)
+- **Self-supervised learning** (logged run outcomes → recommendations, no labelling step)
 
 ---
 
 ## Roadmap
 
 **MVP - Today**
-Mesh upload & analysis, importance-weighted QEM decimation with 6 importance cues, Quality Guard, 4-level LOD generation, Three.js viewer with heatmap overlay, animation-aware optimization, UV-density preservation, user feedback loop, preference model training, optimization recommendation engine, model inspector, export pipeline.
+Mesh upload & analysis, importance-weighted QEM decimation with 6 importance cues, 19-cue edge feature extraction, Quality Guard, 4-level LOD generation, Three.js viewer with heatmap overlay, animation-aware optimization, UV-density preservation, optimization event logging, recommendation engine, model inspector, export pipeline.
 
 **v1.1 - Near Term**
 Interactive heatmap refinement (paint importance directly on mesh), texture reallocation for UV distortion correction.
@@ -392,7 +418,7 @@ crunch3d/
 │   ├── services/
 │   │   ├── file_handler.py    # Job management, upload/processed dirs
 │   │   ├── mesh_analyzer.py   # Stats extraction
-│   │   └── feedback_trainer.py # Feedback recording, preference model
+│   │   └── optimization_events.py # Run outcome logging, recommendations
 │   │
 │   ├── learning/
 │   │   ├── gnn_model.py       # GATConv edge importance
@@ -411,7 +437,7 @@ crunch3d/
 │   │
 │   ├── uploads/               # Per-job uploads
 │   ├── processed/             # Per-job output
-│   └── training/              # Feedback logs, preference model
+│   └── training/              # Optimization event log
 │
 └── web/                       # React frontend
     ├── index.html
@@ -437,7 +463,8 @@ crunch3d/
         │   ├── ModelViewer.jsx      # Three.js canvas, split view, heatmap
         │   ├── ModelInspector.jsx   # Scene graph, transform, camera info
         │   ├── PresetSelector.jsx   # Platform presets, face slider, options
-        │   └── StatsPanel.jsx       # Before/after stats, LODs, feedback, download
+        │   ├── EdgeFeaturePanel.jsx # 19-cue edge feature readout
+        │   └── StatsPanel.jsx       # Before/after stats, LODs, edge cues, download
         └── landing/
             ├── Layout.jsx          # Landing page layout
             ├── LandingPage.jsx     # Marketing page
@@ -543,4 +570,4 @@ The Vite dev server proxies all `/api/*` calls to port 8000 automatically.
 - **Rigged meshes** - Skinned/animated meshes with bone weights are not supported. Static meshes only. Animation *zones* are detected but skinning is not preserved.
 - **Job persistence** - Jobs are stored in memory with filesystem fallback. Restarting the backend clears in-memory state.
 - **Concurrency** - No async job queue (planned for v2.0). Large meshes block during decimation.
-- **GNN training** - The training loop is a scaffold and requires a dataset of user feedback events to produce meaningful model weights.
+- **GNN training** - The training loop is a scaffold. It bootstraps from logged optimization events, so model quality scales with how many meshes have been processed.

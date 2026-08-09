@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700&family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -10,55 +10,65 @@
   box-sizing: border-box;
 }
 
+/* Design tokens mirror the landing page palette (tailwind.config.js brand-*)
+   so the demo, the viewer and the marketing pages read as one product:
+   near-black surfaces, hairline white borders, a single red accent. */
 :root,
 :root[data-theme="dark"] {
-  --bg-primary: #0b0b0c;
-  --bg-secondary: #111112;
-  --bg-card: #18181a;
-  --bg-soft: #1f1f22;
-  --bg-elevated: #252529;
-  --text-primary: #f0f0f2;
-  --text-secondary: #b2b2b9;
-  --text-muted: #7f7f89;
-  --border: #34343a;
-  --border-soft: #2b2b31;
-  --accent: #ffffff;
-  --accent-soft: #d4d4d8;
-  --success: #d1d5db;
-  --danger: #c4c4c9;
-  --canvas-bg: #2f2f33;
-  --shadow: 0 20px 38px rgba(0, 0, 0, 0.35);
+  --bg-primary: #0b0b0b;
+  --bg-secondary: #0a0a0a;
+  --bg-card: #0d0d0d;
+  --bg-soft: #111111;
+  --bg-elevated: #151515;
+  --text-primary: #f2f2f2;
+  --text-secondary: #888888;
+  --text-muted: #666666;
+  --border: rgba(255, 255, 255, 0.1);
+  --border-soft: rgba(255, 255, 255, 0.05);
+  --accent: #ff3b3b;
+  --accent-soft: #ff6b6b;
+  --accent-contrast: #1a0505;
+  --success: #ff3b3b;
+  --danger: #ff5c5c;
+  --canvas-bg: #0f0f0f;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --shadow: 0 20px 38px rgba(0, 0, 0, 0.45);
   --app-gradient:
     radial-gradient(
       circle at 8% 10%,
-      rgba(255, 255, 255, 0.09),
+      rgba(255, 59, 59, 0.06),
       transparent 42%
     ),
     radial-gradient(
       circle at 92% 90%,
-      rgba(255, 255, 255, 0.07),
+      rgba(255, 255, 255, 0.04),
       transparent 46%
     ),
-    linear-gradient(160deg, #0b0b0c 0%, #131315 100%);
+    linear-gradient(160deg, #0b0b0b 0%, #101010 100%);
 }
 
+/* Light counterpart of the same system — identical structure and accent,
+   inverted surfaces — so toggling theme never changes the visual language. */
 :root[data-theme="light"] {
-  --bg-primary: #f1f1f1;
-  --bg-secondary: #fcfcfc;
-  --bg-card: #f7f7f8;
-  --bg-soft: #ececee;
-  --bg-elevated: #e4e4e8;
-  --text-primary: #0f1012;
-  --text-secondary: #383942;
-  --text-muted: #6c6d76;
-  --border: #c7c8cf;
-  --border-soft: #d8d9df;
-  --accent: #0f1012;
-  --accent-soft: #272932;
-  --success: #272932;
-  --danger: #40424d;
-  --canvas-bg: #dedee4;
-  --shadow: 0 16px 28px rgba(20, 20, 20, 0.12);
+  --bg-primary: #f4f4f5;
+  --bg-secondary: #ffffff;
+  --bg-card: #fbfbfc;
+  --bg-soft: #f0f0f2;
+  --bg-elevated: #e8e8ec;
+  --text-primary: #0b0b0b;
+  --text-secondary: #5a5a63;
+  --text-muted: #85858f;
+  --border: rgba(11, 11, 11, 0.14);
+  --border-soft: rgba(11, 11, 11, 0.08);
+  --accent: #e02b2b;
+  --accent-soft: #c62222;
+  --accent-contrast: #ffffff;
+  --success: #e02b2b;
+  --danger: #c62222;
+  --canvas-bg: #e6e6ea;
+  --shadow: 0 16px 28px rgba(20, 20, 20, 0.1);
   --app-gradient:
     radial-gradient(
       circle at 12% 8%,
@@ -67,10 +77,10 @@
     ),
     radial-gradient(
       circle at 88% 88%,
-      rgba(223, 223, 227, 0.8),
+      rgba(224, 43, 43, 0.06),
       transparent 46%
     ),
-    linear-gradient(160deg, #f5f5f7 0%, #ececf0 100%);
+    linear-gradient(160deg, #f6f6f7 0%, #eeeef0 100%);
 }
 
 html,
@@ -89,6 +99,10 @@ body {
   min-height: 100vh;
 }
 
+::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
 body[data-view="demo"] {
   background: var(--app-gradient);
 }
@@ -105,11 +119,39 @@ body[data-view="demo"]::before {
   opacity: 0.32;
 }
 
+/* Shared shell — same max width, gutters and footer rhythm as landing/Layout.jsx */
 .app {
-  max-width: 1560px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 24px;
   animation: app-fade-in 360ms ease-out;
+}
+
+.app-footer {
+  width: 100%;
+  margin-top: 56px;
+  padding: 32px 0 48px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.app-footer a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.app-footer a:hover {
+  color: var(--text-primary);
+}
+
+.app-footer-links {
+  display: flex;
+  gap: 16px;
 }
 
 @keyframes app-fade-in {
@@ -134,7 +176,6 @@ body[data-view="demo"]::before {
 }
 
 .header h1 {
-  font-family: "Orbitron", "Rajdhani", sans-serif;
   font-size: clamp(1.8rem, 2.7vw, 2.5rem);
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -156,7 +197,7 @@ body[data-view="demo"]::before {
 
 .upload-zone {
   border: 1px dashed var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   padding: 72px 40px;
   text-align: center;
   cursor: pointer;
@@ -216,7 +257,7 @@ body[data-view="demo"]::before {
 .card {
   background: linear-gradient(165deg, var(--bg-card), var(--bg-soft));
   border: 1px solid var(--border-soft);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   padding: 18px;
   box-shadow: var(--shadow);
   transition:
@@ -230,7 +271,6 @@ body[data-view="demo"]::before {
 }
 
 .card h3 {
-  font-family: "Orbitron", "Rajdhani", sans-serif;
   font-size: 0.83rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
@@ -247,7 +287,7 @@ body[data-view="demo"]::before {
 .preset-btn {
   padding: 10px 8px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
   cursor: pointer;
@@ -301,7 +341,7 @@ body[data-view="demo"]::before {
   width: 100%;
   margin-top: 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 8px 10px;
   background: var(--bg-secondary);
   color: var(--text-primary);
@@ -374,11 +414,10 @@ input[type="range"] {
 }
 
 .optimize-btn {
-  font-family: "Orbitron", "Rajdhani", sans-serif;
   width: 100%;
   padding: 13px;
   border: 1px solid var(--accent-soft);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: linear-gradient(180deg, var(--bg-elevated), var(--bg-card));
   color: var(--text-primary);
   font-size: 0.95rem;
@@ -414,7 +453,7 @@ input[type="range"] {
   position: relative;
   background: var(--canvas-bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   height: 530px;
   box-shadow: var(--shadow);
@@ -427,10 +466,9 @@ input[type="range"] {
 }
 
 .viewer-btn {
-  font-family: "Orbitron", "Rajdhani", sans-serif;
   padding: 7px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--bg-card) 87%, transparent);
   color: var(--text-primary);
   font-size: 0.74rem;
@@ -448,14 +486,13 @@ input[type="range"] {
 }
 
 .viewer-label {
-  font-family: "Orbitron", "Rajdhani", sans-serif;
   position: absolute;
   top: 11px;
   left: 11px;
   padding: 4px 9px;
   background: color-mix(in srgb, var(--bg-secondary) 80%, transparent);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 0.7rem;
   color: var(--text-secondary);
   z-index: 10;
@@ -466,6 +503,48 @@ input[type="range"] {
   grid-template-columns: 1fr 1fr;
   gap: 4px;
   height: 530px;
+}
+
+/* Heatmap legend — chrome follows the theme tokens; the swatch colours are set
+   inline because they mirror the shader's importance ramp, not the palette. */
+.viewer-legend {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
+  color: var(--text-primary);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem;
+  pointer-events: none;
+}
+
+.viewer-legend-title {
+  margin-bottom: 2px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-secondary);
+}
+
+.viewer-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.viewer-legend-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
 }
 
 .viewer-split .viewer-container {
@@ -507,7 +586,7 @@ input[type="range"] {
     var(--bg-secondary)
   );
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   display: flex;
   flex-direction: column;
   min-height: 530px;
@@ -563,7 +642,6 @@ input[type="range"] {
 }
 
 .inspector-section h4 {
-  font-family: "Orbitron", "Rajdhani", sans-serif;
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.11em;
@@ -607,7 +685,7 @@ input[type="range"] {
   font-size: 0.72rem;
   padding: 5px 7px;
   border: 1px solid var(--border-soft);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--bg-soft) 70%, transparent);
   white-space: nowrap;
   overflow: hidden;
@@ -635,7 +713,7 @@ input[type="range"] {
 .stat-item {
   background: linear-gradient(165deg, var(--bg-card), var(--bg-soft));
   border: 1px solid var(--border-soft);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 14px;
   height: 100%;
   display: flex;
@@ -673,56 +751,100 @@ input[type="range"] {
   gap: 12px;
   background: linear-gradient(165deg, var(--bg-card), var(--bg-soft));
   border: 1px solid var(--border-soft);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 14px 16px;
   font-size: 0.82rem;
 }
 
-.feedback-btn-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.feedback-btn {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  padding: 9px;
-  font-size: 0.78rem;
-  cursor: pointer;
-}
-
-.feedback-btn.active {
-  border-color: var(--accent-soft);
-  background: var(--bg-elevated);
-}
-
-.feedback-grid-3 {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.feedback-grid-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.feedback-check {
+/* Edge-cue readout — one row per geometric/appearance/view signal the
+   importance model consumed for this mesh. */
+.edge-groups {
   display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.edge-group-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+  margin-bottom: 7px;
+}
+
+.edge-feature {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
-  font-size: 0.78rem;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.edge-feature:last-child {
+  border-bottom: none;
+}
+
+.edge-feature-name {
+  font-size: 0.79rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.edge-feature.absent .edge-feature-name {
+  color: var(--text-muted);
+}
+
+.edge-feature-value {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  color: var(--accent-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.edge-feature.absent .edge-feature-value {
+  color: var(--text-muted);
+}
+
+.edge-feature-track {
+  grid-column: 1 / -1;
+  height: 3px;
+  background: var(--bg-soft);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.edge-feature-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-soft), var(--accent));
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.edge-feature.absent .edge-feature-fill {
+  background: var(--border);
+}
+
+.edge-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.76rem;
   color: var(--text-secondary);
+  margin-bottom: 14px;
+}
+
+.edge-summary-row strong {
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .download-btn {
   padding: 9px 16px;
   border: 1px solid var(--accent-soft);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
   font-weight: 600;
@@ -737,7 +859,7 @@ input[type="range"] {
 .error-msg {
   background: color-mix(in srgb, var(--bg-card) 84%, transparent);
   border: 1px solid var(--danger);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 10px 13px;
   color: var(--text-primary);
   font-size: 0.82rem;
@@ -779,10 +901,9 @@ input[type="range"] {
     align-items: stretch;
   }
 
-  .feedback-btn-row,
-  .feedback-grid-2,
-  .feedback-grid-3 {
-    grid-template-columns: 1fr;
+  .edge-summary-row {
+    flex-direction: column;
+    gap: 4px;
   }
 
   .download-btn {
