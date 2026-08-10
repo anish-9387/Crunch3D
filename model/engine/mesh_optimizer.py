@@ -68,7 +68,7 @@ def _timing_report() -> None:
 QUALITY_SAMPLE_CAP = 700
 QUALITY_CHUNK_SIZE = 160
 
-SUPPORTED_SAVE_EXTENSIONS = {".obj", ".stl", ".ply", ".off"}
+SUPPORTED_SAVE_EXTENSIONS = {".obj", ".stl", ".ply", ".off", ".glb", ".gltf"}
 
 def resolve_output_extension(input_extension: str) -> str:
     ext = (input_extension or "").lower().strip()

@@ -14,9 +14,6 @@ export default function Layout({ children, onTryDemo }) {
             <a href="#" className="hover:text-brand-white">
               GitHub
             </a>
-            <a href="#" className="hover:text-brand-white">
-              Twitter
-            </a>
           </div>
         </footer>
       </div>

@@ -365,8 +365,11 @@ async def optimize_mesh(request: OptimizeRequest):
 
         from .schemas import TextureExportInfo
 
-        optimized_stats, quality_meta, lod_results = await loop.run_in_executor(
-            None,
+        from concurrent.futures import ProcessPoolExecutor
+        import multiprocessing
+        with ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context('spawn')) as executor:
+            optimized_stats, quality_meta, lod_results = await loop.run_in_executor(
+                executor,
             functools.partial(
                 _run_decimation,
                 input_path=str(input_path),

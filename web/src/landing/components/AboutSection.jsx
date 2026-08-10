@@ -1,199 +1,145 @@
 export default function AboutSection({ onGenerateLods }) {
   return (
-    <section id="about" className="w-full flex flex-col items-start justify-center pt-20 pb-16 relative z-10 px-4 md:px-0">
-      <div className="flex items-center gap-4 mb-8">
-        <span className="text-[#F2F2F2] text-[16px] md:text-[18px] font-medium tracking-tight px-1">01</span>
-        <div className="flex items-center gap-2 px-5 py-2.5 bg-[#E4F1F1] rounded-[14px]">
-          <span className="text-[#0A0A0A] text-[14px] md:text-[15px] font-semibold tracking-wide">About</span>
-          <svg
-            className="w-4 h-4 text-[#0A0A0A]"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M12 2v20M17 5l-10 14M22 12H2M20 17L4 7" />
-          </svg>
-          <span className="text-[#0A0A0A] text-[14px] md:text-[15px] font-semibold tracking-wide">Crunch3d</span>
-        </div>
-      </div>
-
-      <div className="w-full max-w-[1000px] text-left mb-20 px-1">
-        <h2 className="text-[32px] md:text-[46px] lg:text-[54px] font-medium tracking-tight leading-[1.15] text-[#F2F2F2]">
-          Crunch3d transforms heavy 3D models into optimized real-time assets for modern graphics workflows.
-        </h2>
-        <h3 className="text-[20px] md:text-[28px] lg:text-[34px] font-medium tracking-tight leading-[1.2] text-[#888888] mt-4">
-          Designed for developers, artists, and real-time rendering systems.
-        </h3>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 w-full lg:items-start">
-        <div className="flex flex-col gap-6 text-left w-full relative">
-          <div className="w-full aspect-square md:aspect-[4/4.5] bg-[#DDEBEB] rounded-[32px] overflow-hidden relative flex items-center justify-center p-6 border border-white/5">
-            <div className="absolute inset-0 flex items-center justify-center opacity-50">
-              <div className="w-[80%] h-[80%] rounded-full border-[1px] border-[#8BA7A7]" />
-            </div>
-
-            <div className="relative flex items-center gap-2">
-              <div className="w-20 md:w-28 h-12 bg-[#FF3B3B] rounded-r-full rounded-l-[10px] flex items-center justify-center shadow-[0_4px_20px_rgba(255,59,59,0.3)]">
-                <span className="text-[#200505] font-semibold tracking-wide text-[14px]">Cleanup</span>
-              </div>
-              <div className="flex-1 min-w-[60px] h-[2px] bg-[#FF3B3B]" />
-              <div className="w-16 h-16 rounded-full border-2 border-[#FF3B3B] text-[#FF3B3B] flex items-center justify-center bg-white/20 backdrop-blur-sm">
-                <svg
-                  className="w-6 h-6"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                  <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-                  <line x1="12" y1="22.08" x2="12" y2="12" />
-                </svg>
-              </div>
-            </div>
-
-            <svg
-              className="absolute top-10 right-10 w-12 h-12 text-[#FF3B3B] opacity-80"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M12 2v20M17 5l-10 14M22 12H2M20 17L4 7" />
-            </svg>
+    <section id="about" className="w-full flex flex-col items-center justify-center pt-24 pb-20 relative z-10 px-4 md:px-0">
+      <div className="w-full max-w-[1200px] flex flex-col items-center">
+        
+        {/* Header */}
+        <div className="flex flex-col items-center text-center mb-16">
+          <div className="flex items-center gap-2 px-5 py-2.5 bg-white/5 border border-white/10 rounded-full mb-8">
+            <span className="text-[#F2F2F2] text-[14px] font-semibold tracking-wide">Capabilities</span>
           </div>
-
-          <div className="flex flex-col gap-2 px-1">
-            <h3 className="text-[#F2F2F2] text-[22px] font-semibold tracking-tight">Mesh Preprocessing</h3>
-            <p className="text-[#888888] text-[15px] leading-relaxed">
-              Automatically cleans and prepares complex 3D meshes before optimization.
-            </p>
-            <p className="text-[#666666] text-[13px] leading-relaxed mt-1">
-              Removes duplicate vertices, fixes topology issues, and validates geometry.
-            </p>
-          </div>
+          <h2 className="text-[36px] md:text-[52px] lg:text-[64px] font-medium tracking-tight leading-[1.1] text-[#F2F2F2] max-w-[900px]">
+            Engineered for <span className="text-[#FF3B3B]">performance.</span><br />
+            Built for scale.
+          </h2>
+          <p className="text-[18px] md:text-[20px] text-[#888888] mt-6 max-w-[600px] leading-relaxed">
+            Everything you need to seamlessly integrate optimized 3D assets into your real-time graphics workflows.
+          </p>
         </div>
 
-        <div className="flex flex-col gap-6 text-left w-full lg:-mt-10 relative">
-          <button
-            type="button"
-            onClick={onGenerateLods}
-            className="w-full bg-[#FF3B3B] rounded-[24px] px-6 py-5 flex items-center justify-between cursor-pointer shadow-[0_0_40px_-10px_rgba(255,59,59,0.5)] hover:bg-[#E63535] transition-colors relative z-20"
-          >
-            <span className="text-[#1A0505] text-[15px] font-semibold tracking-wider">GENERATE LODs</span>
-            <div className="w-8 h-8 bg-[#1A0505] rounded-full flex items-center justify-center">
-              <svg
-                className="w-4 h-4 text-[#F2F2F2]"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+        {/* Bento Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 w-full auto-rows-[280px]">
+          
+          {/* Card 1: LOD Generation (Span 2) */}
+          <div className="md:col-span-2 bg-[#0A0A0A] rounded-[32px] overflow-hidden flex flex-col md:flex-row p-8 relative border border-white/5 hover:border-white/10 transition-colors group">
+            <div className="absolute inset-0 bg-gradient-to-br from-[#FF3B3B]/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+            <div className="flex flex-col justify-between h-full z-10 w-full md:w-1/2">
+              <div>
+                <h3 className="text-[#F2F2F2] text-[24px] font-semibold tracking-tight mb-2">Multi-Level LODs</h3>
+                <p className="text-[#888888] text-[15px] leading-relaxed">
+                  Automatically generate an entire chain of level-of-detail models (LOD0, LOD1, LOD2) from a single high-poly source mesh.
+                </p>
+              </div>
+              <button
+                onClick={onGenerateLods}
+                className="mt-6 md:mt-0 w-fit flex items-center gap-2 px-6 py-3 bg-[#FF3B3B] text-[#1A0505] rounded-full font-semibold text-[14px] hover:bg-white hover:text-black transition-colors"
               >
-                <path d="M7 17L17 7" />
-                <path d="M7 7h10v10" />
-              </svg>
+                Generate LODs Now
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+              </button>
             </div>
-          </button>
-
-          <div className="w-full aspect-square md:aspect-[4/4.5] bg-[#E3F2F2] rounded-[32px] overflow-hidden relative flex items-center justify-center border border-white/5 p-6">
-            <div className="relative flex flex-col items-center justify-center gap-6 z-10 w-full h-full">
-              <div className="relative w-32 h-32 flex items-center justify-center">
-                <div className="absolute inset-0 rounded-full border border-[#9AC5C5]" />
-                <div className="absolute inset-4 rounded-full border border-[#9AC5C5] opacity-50" />
-
-                <svg
-                  className="w-12 h-12 text-[#FF3B3B] z-10"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M12 2v20M17 5l-10 14M22 12H2M20 17L4 7" />
-                </svg>
-              </div>
-
-              <div className="px-5 py-2.5 rounded-full border border-[#FF3B3B]/30 text-[#FF3B3B] bg-white/40 backdrop-blur-md shadow-sm">
-                <span className="text-[14px] font-medium tracking-wide">Details Preserved!</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-2 px-1">
-            <h3 className="text-[#F2F2F2] text-[22px] font-semibold tracking-tight">Feature-Aware Simplification</h3>
-            <p className="text-[#888888] text-[15px] leading-relaxed">
-              Detects important edges and preserves visual detail during polygon reduction.
-            </p>
-            <p className="text-[#666666] text-[13px] leading-relaxed mt-1">
-              Uses curvature and boundary detection to maintain mesh quality.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-6 text-left w-full relative">
-          <div className="w-full aspect-square md:aspect-[4/4.5] bg-[#DCEBEC] rounded-[32px] overflow-hidden relative flex items-center justify-center p-6 border border-white/5">
-            <div className="relative w-full h-full flex items-center justify-center">
-              <div className="absolute top-4 right-4 w-28 h-28 opacity-80 animate-[spin_10s_linear_infinite] pointer-events-none">
-                <svg viewBox="0 0 100 100">
-                  <path
-                    d="M 50, 50 m -35, 0 a 35,35 0 1,1 70,0 a 35,35 0 1,1 -70,0"
-                    fill="transparent"
-                    id="circleTextPath"
-                  />
-                  <text fontSize="8" fill="#719898" letterSpacing="1.5" fontWeight="600">
-                    <textPath href="#circleTextPath">GENERATE OPTIMIZE GENERATE OPTIMIZE</textPath>
-                  </text>
-                </svg>
-              </div>
-
-              <svg
-                className="absolute top-12 right-12 w-10 h-10 text-[#FF3B3B]"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M12 2v20M17 5l-10 14M22 12H2M20 17L4 7" />
-              </svg>
-
-              <div className="absolute bottom-6 left-6 flex flex-col gap-3">
-                <div className="w-32 h-10 rounded-full bg-[#B5CBCB] flex items-center justify-center border border-white/20 shadow-sm transform -rotate-12 translate-y-4 translate-x-4 opacity-80">
-                  <span className="text-[#4C6666] font-medium text-[13px] uppercase tracking-wide">LOD 2</span>
+            <div className="hidden md:flex w-1/2 h-full relative items-center justify-center">
+              <div className="flex flex-col gap-3 transform rotate-6 translate-x-8">
+                <div className="px-8 py-3 rounded-full border border-white/20 bg-white/5 backdrop-blur-md shadow-2xl flex items-center justify-between w-48">
+                  <span className="text-white font-medium text-sm">LOD 0</span>
+                  <span className="text-white/40 text-xs">100%</span>
                 </div>
-                <div className="w-32 h-10 rounded-full bg-[#AAC4C4] flex items-center justify-center border border-white/20 shadow-sm transform rotate-6 translate-x-12 opacity-90 z-10">
-                  <span className="text-[#4C6666] font-medium text-[13px] uppercase tracking-wide">LOD 1</span>
+                <div className="px-8 py-3 rounded-full border border-white/20 bg-white/5 backdrop-blur-md shadow-2xl flex items-center justify-between w-40 translate-x-8">
+                  <span className="text-white font-medium text-sm">LOD 1</span>
+                  <span className="text-white/40 text-xs">50%</span>
                 </div>
-                <div className="w-32 h-10 rounded-full bg-[#9EB9B9] flex items-center justify-center border border-white/20 shadow-sm transform -rotate-3 z-20">
-                  <span className="text-[#3A4D4D] font-semibold text-[13px] uppercase tracking-wide">LOD 0</span>
+                <div className="px-8 py-3 rounded-full border border-white/20 bg-white/5 backdrop-blur-md shadow-2xl flex items-center justify-between w-32 translate-x-16">
+                  <span className="text-white font-medium text-sm">LOD 2</span>
+                  <span className="text-white/40 text-xs">25%</span>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="flex flex-col gap-2 px-1">
-            <h3 className="text-[#F2F2F2] text-[22px] font-semibold tracking-tight">Multi-Level LOD Generation</h3>
-            <p className="text-[#888888] text-[15px] leading-relaxed">
-              Automatically creates multiple optimized versions of the same 3D model.
-            </p>
-            <div className="flex flex-col gap-1 mt-1 text-[#666666] text-[13px]">
-              <span className="font-semibold text-[#888888]">LOD0 → Original</span>
-              <span>LOD1 → 50%</span>
-              <span>LOD2 → 25%</span>
+          {/* Card 2: Format Support (Span 1) */}
+          <div className="md:col-span-1 bg-[#0A0A0A] rounded-[32px] overflow-hidden flex flex-col p-8 relative border border-white/5 hover:border-white/10 transition-colors group">
+            <div className="flex-1 w-full flex items-center justify-center relative mb-6">
+               <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-white/10 to-transparent opacity-50" />
+               <div className="flex flex-wrap gap-2 justify-center z-10">
+                 {['OBJ', 'GLB', 'FBX', 'STL'].map(ext => (
+                   <span key={ext} className="px-3 py-1.5 rounded-lg bg-white/10 text-white/80 text-xs font-bold tracking-wider">{ext}</span>
+                 ))}
+               </div>
+            </div>
+            <div className="z-10">
+              <h3 className="text-[#F2F2F2] text-[20px] font-semibold tracking-tight mb-2">Universal Formats</h3>
+              <p className="text-[#888888] text-[14px] leading-relaxed">
+                Native support for industry standard 3D formats. No plugins needed.
+              </p>
             </div>
           </div>
+
+          {/* Card 3: Feature-Aware (Span 1, RowSpan 2) */}
+          <div className="md:col-span-1 md:row-span-2 bg-[#0A0A0A] rounded-[32px] overflow-hidden flex flex-col p-8 relative border border-white/5 hover:border-white/10 transition-colors group">
+             <div className="absolute top-0 left-0 w-full h-1/2 bg-gradient-to-b from-[#FF3B3B]/10 to-transparent opacity-50" />
+             <div className="flex-1 w-full flex items-center justify-center relative my-8 min-h-[200px]">
+                <div className="w-32 h-40 border border-white/20 rounded-[40px] transform -rotate-12 flex items-center justify-center relative overflow-hidden group-hover:rotate-0 transition-transform duration-700">
+                   <div className="absolute inset-0 bg-white/5" />
+                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="w-16 h-16 text-[#FF3B3B] opacity-80"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                </div>
+             </div>
+             <div className="z-10 mt-auto">
+              <h3 className="text-[#F2F2F2] text-[24px] font-semibold tracking-tight mb-3">Feature-Aware Simplification</h3>
+              <p className="text-[#888888] text-[15px] leading-relaxed">
+                Our advanced curvature detection algorithms preserve critical visual details, sharp edges, and boundaries while aggressively reducing polygon counts in flat areas.
+              </p>
+            </div>
+          </div>
+
+          {/* Card 4: Mesh Preprocessing (Span 2) */}
+          <div className="md:col-span-2 bg-[#0A0A0A] rounded-[32px] overflow-hidden flex flex-col p-8 relative border border-white/5 hover:border-white/10 transition-colors group">
+            <div className="flex-1 w-full flex items-center gap-8 z-10 mb-6 relative">
+               <div className="w-16 h-16 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center">
+                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-8 h-8 text-white/50"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+               </div>
+               <div className="h-[2px] flex-1 bg-gradient-to-r from-white/20 to-[#FF3B3B]/50 relative overflow-hidden">
+                 <div className="absolute top-0 left-0 h-full w-1/3 bg-[#FF3B3B] animate-[slide_2s_ease-in-out_infinite]" />
+               </div>
+               <div className="w-16 h-16 rounded-2xl bg-[#FF3B3B]/10 border border-[#FF3B3B]/30 flex items-center justify-center shadow-[0_0_30px_rgba(255,59,59,0.2)]">
+                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-8 h-8 text-[#FF3B3B]"><path d="M5 13l4 4L19 7"/></svg>
+               </div>
+            </div>
+            <div className="z-10 mt-auto w-full md:w-2/3">
+              <h3 className="text-[#F2F2F2] text-[20px] font-semibold tracking-tight mb-2">Automated Preprocessing</h3>
+              <p className="text-[#888888] text-[14px] leading-relaxed">
+                Automatically merges duplicate vertices, repairs broken topology, and validates geometric integrity before optimization begins.
+              </p>
+            </div>
+          </div>
+
+          {/* Card 5: Fast Pipeline (Span 1) */}
+          <div className="md:col-span-1 bg-[#0A0A0A] rounded-[32px] overflow-hidden flex flex-col p-8 relative border border-white/5 hover:border-white/10 transition-colors group">
+            <div className="flex-1 w-full flex items-center justify-start gap-3 z-10 mb-6">
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="w-2 rounded-full bg-[#FF3B3B] transition-all duration-300" style={{ height: `${20 + Math.random() * 40}px`, animation: `pulse ${1 + i * 0.2}s infinite` }} />
+              ))}
+            </div>
+            <div className="z-10 mt-auto">
+              <h3 className="text-[#F2F2F2] text-[20px] font-semibold tracking-tight mb-2">Smart Architecture</h3>
+              <p className="text-[#888888] text-[14px] leading-relaxed">
+                Powered by Python and PyMeshLab for robust QEM decimation, enhanced with Graph Neural Networks for feature preservation.
+              </p>
+            </div>
+          </div>
+
+          {/* Card 6: Material Preservation (Span 1) */}
+          <div className="md:col-span-1 bg-[#0A0A0A] rounded-[32px] overflow-hidden flex flex-col p-8 relative border border-white/5 hover:border-white/10 transition-colors group">
+             <div className="flex-1 w-full flex items-center justify-center relative mb-6">
+               <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-blue-500 via-purple-500 to-[#FF3B3B] animate-[spin_4s_linear_infinite] opacity-80 blur-[2px]" />
+             </div>
+            <div className="z-10 mt-auto">
+              <h3 className="text-[#F2F2F2] text-[20px] font-semibold tracking-tight mb-2">Materials Kept</h3>
+              <p className="text-[#888888] text-[14px] leading-relaxed">
+                Retains all texture mapping and UV data flawlessly during reduction.
+              </p>
+            </div>
+          </div>
+
         </div>
       </div>
     </section>

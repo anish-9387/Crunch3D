@@ -52,6 +52,8 @@ def predict_edge_importance(
     """
     try:
         import torch
+        # Prevent OpenMP collisions with PyMeshLab/Trimesh C++ backends
+        torch.set_num_threads(1)
     except ImportError as e:
         raise ImportError(
             "GNN inference requires 'torch'. Install with: pip install torch"

@@ -6,6 +6,7 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js'
 import { STLLoader } from 'three/addons/loaders/STLLoader.js'
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js'
 import ModelInspector from './ModelInspector'
 import { getImportanceMap } from '../api/client'
 
@@ -193,6 +194,8 @@ function MeshFromUrl({ url, filename, wireframe, importanceEnabled, importanceSc
       }, undefined, onError)
     } else if (ext === 'glb' || ext === 'gltf') {
       new GLTFLoader(manager).load(url, (gltf) => onSuccess(gltf.scene), undefined, onError)
+    } else if (ext === 'fbx') {
+      new FBXLoader(manager).load(url, (fbx) => onSuccess(fbx), undefined, onError)
     } else {
       onError(new Error(`Unsupported preview format: ${ext || 'unknown'}`))
     }
