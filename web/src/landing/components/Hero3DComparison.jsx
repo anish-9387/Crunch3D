@@ -1,4 +1,4 @@
-import React, { useRef, useState, useLayoutEffect, useMemo, Suspense } from 'react'
+import React, { useRef, useState, useLayoutEffect, useMemo, Suspense, useEffect } from 'react'
 import * as THREE from 'three'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Environment, OrbitControls, useGLTF, Float, ContactShadows } from '@react-three/drei'
@@ -83,28 +83,48 @@ export default function Hero3DComparison() {
   const sliderRef = useRef(50)
   const thumbRef = useRef(null)
 
+  const [inViewRef, setInViewRef] = useState(null)
+  const [inView, setInView] = useState(true)
+
+  useEffect(() => {
+    if (!inViewRef) return
+    const observer = new IntersectionObserver(([entry]) => {
+      setInView(entry.isIntersecting)
+    }, { rootMargin: '400px' })
+    observer.observe(inViewRef)
+    return () => observer.disconnect()
+  }, [inViewRef])
+
   return (
-    <div className="absolute inset-0 w-full h-full z-0 overflow-hidden pointer-events-auto">
+    <div ref={setInViewRef} className="absolute inset-0 w-full h-full z-0 overflow-hidden pointer-events-auto">
       
       {/* 3D Canvas */}
-      <Canvas
-        camera={{ position: [0, 0, 5], fov: 45 }}
-        gl={{ antialias: true, alpha: true, localClippingEnabled: true, powerPreference: "high-performance" }}
-        dpr={[1, 2]}
-      >
-        <ambientLight intensity={1.5} />
-        <spotLight position={[5, 10, 5]} intensity={3} penumbra={1} angle={0.5} />
-        <directionalLight position={[-5, 5, -5]} intensity={1} />
-        
-        <Suspense fallback={<Loader />}>
-          <Float speed={1.5} rotationIntensity={0.1} floatIntensity={0.2}>
-            <Models sliderRef={sliderRef} />
-          </Float>
-        </Suspense>
-        
-        <ContactShadows position={[0, -2.6, 0]} opacity={0.5} scale={10} blur={2} />
-        <Environment preset="city" />
-      </Canvas>
+      {!inView && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none">
+          <div className="w-8 h-8 border-4 border-[#FF3B3B]/20 border-t-[#FF3B3B] rounded-full animate-spin" />
+        </div>
+      )}
+
+      {inView && (
+        <Canvas
+          camera={{ position: [0, 0, 5], fov: 45 }}
+          gl={{ antialias: true, alpha: true, localClippingEnabled: true, powerPreference: "default" }}
+          dpr={[1, 1.5]}
+        >
+          <ambientLight intensity={1.5} />
+          <spotLight position={[5, 10, 5]} intensity={3} penumbra={1} angle={0.5} />
+          <directionalLight position={[-5, 5, -5]} intensity={1} />
+          
+          <Suspense fallback={<Loader />}>
+            <Float speed={1.5} rotationIntensity={0.1} floatIntensity={0.2}>
+              <Models sliderRef={sliderRef} />
+            </Float>
+          </Suspense>
+          
+          <ContactShadows position={[0, -2.6, 0]} opacity={0.5} scale={10} blur={2} />
+          <Environment preset="city" />
+        </Canvas>
+      )}
 
       {/* HTML Slider UI Overlay */}
       <div className="absolute top-1/2 left-0 w-full -translate-y-1/2 z-20 px-[20px] md:px-[50px]">
