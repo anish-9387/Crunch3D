@@ -64,11 +64,7 @@ function WireframeModel({ url, position = [0,0,0], scale = 1, color = '#FF3B3B',
     })
   }, [clone, color, opacity])
 
-  useFrame((state) => {
-    if (meshRef.current) {
-      meshRef.current.rotation.y = state.clock.getElapsedTime() * speed
-    }
-  })
+  // Removed animation for performance
 
   return (
     <group position={position}>
@@ -88,9 +84,7 @@ export function LODShowcase() {
       {/* Sub Card LOD 0 */}
       <div className="bg-white/5 border border-white/10 rounded-2xl relative overflow-hidden flex flex-col items-center justify-center min-h-[250px] hover:bg-white/10 transition-colors group/sub">
         <ViewportCanvas camera={{ position: [0, 0, 8], fov: 40 }}>
-          <Float speed={1.5} rotationIntensity={0.5} floatIntensity={0.5}>
-            <WireframeModel url="/models/optimised lods/lodmain_LOD0.glb" scale={4} color="#FF3B3B" opacity={0.4} />
-          </Float>
+          <WireframeModel url="/models/optimised lods/lodmain_LOD0.glb" scale={4} color="#FF3B3B" opacity={0.4} />
         </ViewportCanvas>
         <div className="absolute bottom-4 z-10 px-4 py-1.5 rounded-full border border-white/20 bg-black/80 backdrop-blur-md shadow-2xl flex items-center justify-center whitespace-nowrap group-hover/sub:border-[#FF3B3B]/50 transition-colors">
           <span className="text-white font-bold text-[11px] tracking-widest uppercase">LOD 0 - 100%</span>
@@ -100,9 +94,7 @@ export function LODShowcase() {
       {/* Sub Card LOD 1 */}
       <div className="bg-white/5 border border-white/10 rounded-2xl relative overflow-hidden flex flex-col items-center justify-center min-h-[250px] hover:bg-white/10 transition-colors group/sub">
         <ViewportCanvas camera={{ position: [0, 0, 8], fov: 40 }}>
-          <Float speed={1.5} rotationIntensity={0.5} floatIntensity={0.5}>
-            <WireframeModel url="/models/optimised lods/lodmain_LOD1.glb" scale={4} color="#00E5FF" opacity={0.6} />
-          </Float>
+          <WireframeModel url="/models/optimised lods/lodmain_LOD1.glb" scale={4} color="#00E5FF" opacity={0.6} />
         </ViewportCanvas>
         <div className="absolute bottom-4 z-10 px-4 py-1.5 rounded-full border border-white/20 bg-black/80 backdrop-blur-md shadow-2xl flex items-center justify-center whitespace-nowrap group-hover/sub:border-[#00E5FF]/50 transition-colors">
           <span className="text-white font-bold text-[11px] tracking-widest uppercase">LOD 1 - 50%</span>
@@ -112,9 +104,7 @@ export function LODShowcase() {
       {/* Sub Card LOD 2 */}
       <div className="bg-white/5 border border-white/10 rounded-2xl relative overflow-hidden flex flex-col items-center justify-center min-h-[250px] hover:bg-white/10 transition-colors group/sub">
         <ViewportCanvas camera={{ position: [0, 0, 8], fov: 40 }}>
-          <Float speed={1.5} rotationIntensity={0.5} floatIntensity={0.5}>
-            <WireframeModel url="/models/optimised lods/lodmain_LOD2.glb" scale={4} color="#FF3B3B" opacity={0.8} />
-          </Float>
+          <WireframeModel url="/models/optimised lods/lodmain_LOD2.glb" scale={4} color="#FF3B3B" opacity={0.8} />
         </ViewportCanvas>
         <div className="absolute bottom-4 z-10 px-4 py-1.5 rounded-full border border-white/20 bg-black/80 backdrop-blur-md shadow-2xl flex items-center justify-center whitespace-nowrap group-hover/sub:border-[#FF3B3B]/50 transition-colors">
           <span className="text-white font-bold text-[11px] tracking-widest uppercase">LOD 2 - 25%</span>

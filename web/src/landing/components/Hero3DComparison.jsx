@@ -42,10 +42,6 @@ function Models({ sliderRef }) {
   }, [sceneOriginal, sceneOptimized, clipRight, clipLeft])
 
   useFrame((state) => {
-    if (groupRef.current) {
-      groupRef.current.rotation.y = state.clock.getElapsedTime() * 0.15
-    }
-
     // Read directly from ref to avoid React render cycle overhead (zero lag)
     const val = sliderRef.current
     const screenX = (val / 100) * 2 - 1
@@ -116,9 +112,7 @@ export default function Hero3DComparison() {
           <directionalLight position={[-5, 5, -5]} intensity={1} />
           
           <Suspense fallback={<Loader />}>
-            <Float speed={1.5} rotationIntensity={0.1} floatIntensity={0.2}>
-              <Models sliderRef={sliderRef} />
-            </Float>
+            <Models sliderRef={sliderRef} />
           </Suspense>
           
           <ContactShadows position={[0, -2.6, 0]} opacity={0.5} scale={10} blur={2} />
