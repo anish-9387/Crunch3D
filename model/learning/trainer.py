@@ -24,6 +24,30 @@ logger = logging.getLogger(__name__)
 DEFAULT_CHECKPOINT_DIR = Path(__file__).parent / "checkpoints"
 
 
+def _write_meta(meta_path: Path, model, dataset_size: int) -> None:
+    """Persist model metadata (feature count) next to the checkpoint."""
+    import json
+
+    from .features import NUM_FEATURES
+
+    try:
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "in_features": NUM_FEATURES,
+                    "hidden_dim": model.convs[0].in_channels
+                    if hasattr(model.convs[0], "in_channels")
+                    else None,
+                    "num_layers": len(model.convs),
+                    "num_parameters": sum(p.numel() for p in model.parameters()),
+                    "dataset_size": dataset_size,
+                },
+                ensure_ascii=True,
+            )
+    except Exception as exc:
+        logger.warning("Could not write model meta: %s", exc)
+
+
 def train(
     data_dir: str | Path,
     epochs: int = 200,
@@ -31,6 +55,7 @@ def train(
     checkpoint_dir: str | Path | None = None,
     val_split: float = 0.2,
     patience: int = 15,
+    warm_start: bool = True,
 ) -> dict:
     """Train the edge importance GNN with proper evaluation.
 
@@ -48,6 +73,10 @@ def train(
         Fraction of data used for validation (default 0.2).
     patience : int
         Early stopping patience (default 15 epochs).
+    warm_start : bool
+        When True and a checkpoint already exists, training resumes from it
+        (self-learning / fine-tuning).  When False, training starts from
+        scratch.
 
     Returns
     -------
@@ -87,11 +116,13 @@ def train(
                     logger.warning("Failed to load %s: %s", p.name, e)
 
     save_path = checkpoint_dir / "crunch3d_gnn_model.pt"
+    meta_path = checkpoint_dir / "crunch3d_gnn_model_meta.json"
 
     if not dataset:
         logger.warning("No training data found in %s. Generating a dummy checkpoint.", data_dir)
         model = build_edge_importance_model()
         torch.save(model.state_dict(), save_path)
+        _write_meta(meta_path, model, dataset_size=0)
         return {
             "epochs_completed": 0,
             "best_train_loss": 0.0,
@@ -118,6 +149,18 @@ def train(
 
     # ── Model, optimizer, scheduler ───────────────────────────────────────
     model = build_edge_importance_model()
+    if warm_start and save_path.exists():
+        try:
+            state = torch.load(save_path, map_location="cpu", weights_only=True)
+            if isinstance(state, dict) and "state_dict" in state:
+                state = state["state_dict"]
+            model.load_state_dict(state, strict=True)
+            logger.info("Warm start: resumed training from %s", save_path)
+        except Exception as e:
+            logger.warning(
+                "Could not warm-start from %s (%s). Training from scratch.",
+                save_path, e,
+            )
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5,
@@ -161,6 +204,7 @@ def train(
             best_val_loss = avg_val_loss
             best_train_loss = avg_train_loss
             torch.save(model.state_dict(), save_path)
+            _write_meta(meta_path, model, dataset_size=len(dataset))
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
@@ -201,8 +245,12 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--patience", type=int, default=15)
+    parser.add_argument("--no_warm_start", action="store_true")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    result = train(args.data_dir, args.epochs, args.lr, patience=args.patience)
+    result = train(
+        args.data_dir, args.epochs, args.lr,
+        patience=args.patience, warm_start=not args.no_warm_start,
+    )
     print(result)

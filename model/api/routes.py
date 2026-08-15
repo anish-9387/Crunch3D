@@ -6,7 +6,7 @@ import logging
 import asyncio
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -19,9 +19,14 @@ from ..services.file_handler import (
     generate_job_id, get_upload_path, get_processed_path,
     validate_extension, cleanup_job,
 )
+from ..services import cloud_storage as storage
+from ..services.download_quota import (
+    get_quota, can_download, consume_download, prune as _prune_downloads,
+)
 from ..services.mesh_analyzer import analyze_mesh
 from ..engine.mesh_optimizer import decimate_mesh, generate_lods, resolve_output_extension
 from ..services.optimization_events import record_optimization_event
+from ..learning.continuous_learning import learning_status, retrain_now
 from ..importance.edge_features import FEATURE_METADATA, FEATURE_WEIGHTS
 
 router = APIRouter(prefix="/api", tags=["mesh"])
@@ -48,6 +53,15 @@ UPLOAD_BASE_DIR = Path(__file__).resolve().parent.parent / "uploads"
 
 def _job_meta_path(job_id: str) -> Path:
     return UPLOAD_BASE_DIR / job_id / JOB_META_FILENAME
+
+
+def _client_id(request: Request) -> str:
+    """Anonymous device id from X-Client-Id, falling back to the IP."""
+    header = request.headers.get("x-client-id", "").strip()
+    if header and len(header) <= 128:
+        return header
+    host = request.client.host if request.client else "unknown"
+    return f"ip:{host}"
 
 
 def _serialize_job_value(value):
@@ -83,17 +97,40 @@ def _save_job(job_id: str) -> None:
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(_serialize_job_value(job), f, ensure_ascii=True)
 
+    # Mirror the meta to durable cloud storage so jobs survive restarts
+    # even when the local disk is ephemeral.
+    if storage.is_enabled():
+        try:
+            with open(meta_path, "rb") as f:
+                mirrored = storage.upload_bytes(storage.key_meta(job_id), f.read())
+        except Exception as exc:
+            mirrored = False
+        if not mirrored:
+            logger.error(
+                "Failed to mirror job meta to cloud storage for job %s", job_id
+            )
+
 
 def _recover_job_from_filesystem(job_id: str) -> dict | None:
     upload_dir = UPLOAD_BASE_DIR / job_id
     if not upload_dir.exists() or not upload_dir.is_dir():
-        return None
+        upload_dir.mkdir(parents=True, exist_ok=True)
 
     mesh_files = [
         p
         for p in upload_dir.iterdir()
         if p.is_file() and p.name != JOB_META_FILENAME and validate_extension(p.name)
     ]
+
+    # Local disk was empty (fresh container?) — pull the mesh from cloud.
+    if not mesh_files and storage.is_enabled():
+        for key in storage.list_prefix(f"{storage.UPLOADS_PREFIX}/{job_id}"):
+            name = Path(key).name
+            if not validate_extension(name):
+                continue
+            if storage.download_file(key, upload_dir / name):
+                mesh_files.append(upload_dir / name)
+
     if not mesh_files:
         return None
 
@@ -119,6 +156,8 @@ def _get_job(job_id: str) -> dict:
         return cached
 
     meta_path = _job_meta_path(job_id)
+    if not meta_path.exists() and storage.is_enabled():
+        storage.download_file(storage.key_meta(job_id), meta_path)
     if meta_path.exists():
         try:
             with open(meta_path, "r", encoding="utf-8") as f:
@@ -240,6 +279,15 @@ async def upload_model(file: UploadFile = File(...)):
     with open(filepath, "wb") as f:
         f.write(content)
 
+    # Raw upload must be durable in the bucket in cloud mode — the local
+    # copy is only a working cache.
+    if not storage.upload_file(storage.key_upload(job_id, file.filename), filepath):
+        if storage.is_enabled():
+            cleanup_job(job_id)
+            raise HTTPException(
+                500, f"Failed to store upload in cloud storage (job {job_id})"
+            )
+
     try:
         stats = analyze_mesh(filepath)
     except Exception as e:
@@ -278,6 +326,7 @@ def _run_decimation(
     base_name: str,
     out_ext: str,
     original_faces: int,
+    job_id: str | None,
 ) -> tuple:
     from ..engine.mesh_optimizer import decimate_mesh, generate_lods as _gen_lods
     optimized_stats, quality_meta = decimate_mesh(
@@ -289,6 +338,7 @@ def _run_decimation(
         strict_quality=strict_quality,
         max_deviation_percent=max_deviation_percent,
         max_target_overshoot_percent=max_target_overshoot_percent,
+        job_id=job_id,
     )
     lod_results = None
     if generate_lods:
@@ -347,10 +397,20 @@ async def optimize_mesh(request: OptimizeRequest):
     jobs[request.job_id]["stage"] = "Starting decimation"
 
     start_time = time.time()
-    input_path = job["output_path"] if using_latest_output else job["filepath"]
+    input_path = Path(job["output_path"] if using_latest_output else job["filepath"])
+    if storage.is_enabled() and not input_path.exists():
+        # Local working cache was cleared (restart / ephemeral disk) — the
+        # durable copy lives in the bucket, so pull it back for processing.
+        input_key = (
+            storage.key_processed(request.job_id, input_path.name)
+            if using_latest_output
+            else storage.key_upload(request.job_id, input_path.name)
+        )
+        if not storage.download_file(input_key, input_path):
+            raise HTTPException(500, "Input mesh is unavailable in cloud storage")
     output_dir = get_processed_path(request.job_id)
-    base_name = Path(input_path).stem
-    input_ext = Path(input_path).suffix.lower()
+    base_name = input_path.stem
+    input_ext = input_path.suffix.lower()
     output_ext = resolve_output_extension(input_ext)
     output_filename = f"{base_name}_optimized{output_ext}"
     output_path = output_dir / output_filename
@@ -385,6 +445,7 @@ async def optimize_mesh(request: OptimizeRequest):
                 base_name=base_name,
                 out_ext=output_ext,
                 original_faces=original_stats.face_count,
+                job_id=request.job_id,
             ),
         )
 
@@ -421,6 +482,20 @@ async def optimize_mesh(request: OptimizeRequest):
         jobs[request.job_id]["original_has_textures"] = quality_meta.get("original_has_textures", False)
         jobs[request.job_id]["original_has_animation"] = quality_meta.get("original_has_animation", False)
         _save_job(request.job_id)
+
+        # Processed outputs + LODs become durable in the bucket.  In cloud
+        # mode every produced file must reach the bucket — the local disk is
+        # only a working cache.
+        processed_dir = get_processed_path(request.job_id)
+        missing_uploads: list[str] = []
+        for f in processed_dir.iterdir():
+            if f.is_file():
+                if not storage.upload_file(storage.key_processed(request.job_id, f.name), f):
+                    missing_uploads.append(f.name)
+        if storage.is_enabled() and missing_uploads:
+            raise RuntimeError(
+                f"Failed to upload processed outputs to cloud storage: {missing_uploads}"
+            )
 
         record_optimization_event(
             job_id=request.job_id,
@@ -549,23 +624,108 @@ async def get_importance_map(job_id: str):
     return ImportanceResponse(scores=scores, vertex_count=len(scores))
 
 
+def _stream_from_cloud(job_id: str) -> StreamingResponse | None:
+    """Stream a processed job directly from the bucket (mirrors local logic)."""
+    if not storage.is_enabled():
+        return None
+
+    keys = storage.list_prefix(f"{storage.PROCESSED_PREFIX}/{job_id}")
+    if not keys:
+        return None
+    keys = sorted(keys)
+
+    if len(keys) == 1:
+        reader = storage.open_stream(keys[0])
+        if reader is None:
+            return None
+        body, size = reader
+        return StreamingResponse(
+            body,
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": f"attachment; filename={Path(keys[0]).name}",
+                "Content-Length": str(size),
+            },
+        )
+
+    # Multiple files (LODs) — zip them
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for key in keys:
+            data = storage.read_bytes(key)
+            if data is not None:
+                zf.writestr(Path(key).name, data)
+    buffer.seek(0)
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename=optimesh_{job_id}.zip",
+            "Content-Length": str(buffer.getbuffer().nbytes),
+        },
+    )
+
+
+@router.get("/download/quota")
+async def download_quota(request: Request):
+    """Remaining daily downloads for the calling client."""
+    client_id = _client_id(request)
+    _prune_downloads()
+    return get_quota(client_id)
+
+
 @router.get("/download/{job_id}")
-async def download_result(job_id: str):
+async def download_result(job_id: str, request: Request):
     job = _get_job(job_id)
     if job["status"] != "completed":
         raise HTTPException(400, "Job not yet completed")
 
+    client_id = _client_id(request)
+    if not can_download(client_id):
+        quota = get_quota(client_id)
+        raise HTTPException(
+            429,
+            "Daily download limit reached. You can download up to "
+            f"{quota['daily_limit']} optimized models per 24h — the window "
+            "resets automatically.",
+            headers={
+                "X-RateLimit-Limit": str(quota["daily_limit"]),
+                "X-RateLimit-Remaining": "0",
+                "Retry-After": str(quota["resets_in_seconds"]),
+            },
+        )
+
+    # Cloud mode: the bucket is the only store that matters — downloads
+    # always stream from it, never from the (ephemeral) local disk.
+    if storage.is_enabled():
+        cloud_keys = storage.list_prefix(f"{storage.PROCESSED_PREFIX}/{job_id}")
+        if not cloud_keys:
+            raise HTTPException(404, "No output files found")
+        _prune_downloads()
+        consume_download(client_id, job_id)
+        response = _stream_from_cloud(job_id)
+        if response is not None:
+            return response
+        raise HTTPException(404, "No output files found")
+
     output_dir = get_processed_path(job_id)
-    files = sorted(output_dir.iterdir())
+    files = sorted(output_dir.iterdir()) if output_dir.exists() else []
 
     if not files:
         raise HTTPException(404, "No output files found")
 
     if len(files) == 1:
+        _prune_downloads()
+        consume_download(client_id, job_id)
+        quota = get_quota(client_id)
         return FileResponse(
             path=str(files[0]),
             filename=files[0].name,
             media_type="application/octet-stream",
+            headers={
+                "X-RateLimit-Remaining": str(quota["downloads_remaining"]),
+                "X-RateLimit-Limit": str(quota["daily_limit"]),
+            },
         )
 
     # Multiple files (LODs) — zip them
@@ -575,10 +735,18 @@ async def download_result(job_id: str):
             zf.write(f, f.name)
     buffer.seek(0)
 
+    _prune_downloads()
+    consume_download(client_id, job_id)
+    quota = get_quota(client_id)
+
     return StreamingResponse(
         buffer,
         media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename=optimesh_{job_id}.zip"},
+        headers={
+            "Content-Disposition": f"attachment; filename=optimesh_{job_id}.zip",
+            "X-RateLimit-Remaining": str(quota["downloads_remaining"]),
+            "X-RateLimit-Limit": str(quota["daily_limit"]),
+        },
     )
 
 
@@ -593,14 +761,30 @@ async def preview_result(job_id: str):
         raise HTTPException(404, "No optimized mesh found")
 
     file_path = Path(output_path)
-    if not file_path.exists():
-        raise HTTPException(404, "No optimized mesh found")
 
-    return FileResponse(
-        path=str(file_path),
-        filename=file_path.name,
-        media_type="application/octet-stream",
-    )
+    # Cloud mode: previews always stream from the bucket.
+    if storage.is_enabled():
+        reader = storage.open_stream(storage.key_processed(job_id, file_path.name))
+        if reader is not None:
+            body, size = reader
+            return StreamingResponse(
+                body,
+                media_type="application/octet-stream",
+                headers={
+                    "Content-Disposition": f"attachment; filename={file_path.name}",
+                    "Content-Length": str(size),
+                },
+            )
+        raise HTTPException(404, "No optimized mesh found in cloud storage")
+
+    if file_path.exists():
+        return FileResponse(
+            path=str(file_path),
+            filename=file_path.name,
+            media_type="application/octet-stream",
+        )
+
+    raise HTTPException(404, "No optimized mesh found")
 
 
 @router.delete("/job/{job_id}")
@@ -608,4 +792,38 @@ async def delete_job(job_id: str):
     _get_job(job_id)
     cleanup_job(job_id)
     jobs.pop(job_id, None)
+    # Remove cloud copies too
+    if storage.is_enabled():
+        storage.delete_prefix(f"{storage.UPLOADS_PREFIX}/{job_id}")
+        storage.delete_prefix(f"{storage.PROCESSED_PREFIX}/{job_id}")
+        storage.delete_prefix(f"{storage.META_PREFIX}/{job_id}")
     return {"message": "Job deleted"}
+
+
+class LearningStatusResponse(BaseModel):
+    enabled: bool
+    dataset_size: int
+    samples_recorded: int
+    seed_generated: int
+    last_trained_at: Optional[float] = None
+    checkpoint_exists: bool
+    checkpoint_modified_at: Optional[float] = None
+    min_new_samples_before_retrain: int
+    retrain_interval_seconds: int
+    last_error: Optional[str] = None
+
+
+@router.get("/learning/status", response_model=LearningStatusResponse)
+async def get_learning_status():
+    """Snapshot of the self-learning subsystem (dataset size, last retrain)."""
+    return LearningStatusResponse(**learning_status())
+
+
+@router.post("/learning/retrain")
+async def trigger_retrain(epochs: Optional[int] = None):
+    """Manually trigger one fine-tuning pass of the GNN on the dataset."""
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, lambda: retrain_now(max_epochs=epochs))
+    if not result.get("ok"):
+        raise HTTPException(422, result.get("error", "Retrain failed"))
+    return result

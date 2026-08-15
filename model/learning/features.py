@@ -2,7 +2,8 @@
 learning/features.py — Geometry-aware per-vertex feature computation.
 
 Computes scale-invariant features that generalize across meshes:
-  [mean_curvature, gaussian_curvature, dihedral_angle, valence, boundary_flag, uv_stretch]
+  [mean_curvature, gaussian_curvature, dihedral_angle, valence, boundary_flag,
+   uv_stretch, color_texture_strength]
 
 These features are shared between training (dataset.py) and inference (inference.py).
 """
@@ -19,19 +20,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-NUM_FEATURES = 6
+NUM_FEATURES = 7
 
 
 def compute_vertex_features(mesh: "trimesh.Trimesh") -> np.ndarray:
-    """Compute 6 geometry-aware features per vertex.
+    """Compute 7 geometry-aware features per vertex.
 
     Features (all scale-invariant):
-        0: mean_curvature     — discrete mean curvature, percentile-normalized
-        1: gaussian_curvature — discrete Gaussian curvature (angle defect), percentile-normalized
-        2: dihedral_angle     — mean dihedral angle of adjacent edges, normalized to [0,1]
-        3: valence            — vertex degree / max_degree (how many edges connect)
-        4: boundary_flag      — 1.0 if vertex is on a boundary edge, else 0.0
-        5: uv_stretch         — UV stretch ratio if UVs present, else 0.0
+        0: mean_curvature          — discrete mean curvature, percentile-normalized
+        1: gaussian_curvature      — discrete Gaussian curvature (angle defect), percentile-normalized
+        2: dihedral_angle          — mean dihedral angle of adjacent edges, normalized to [0,1]
+        3: valence                 — vertex degree / max_degree (how many edges connect)
+        4: boundary_flag           — 1.0 if vertex is on a boundary edge, else 0.0
+        5: uv_stretch              — UV stretch ratio if UVs present, else 0.0
+        6: color_texture_strength  — texture/vertex-color detail cue (see _color_texture_strength)
 
     Parameters
     ----------
@@ -40,7 +42,7 @@ def compute_vertex_features(mesh: "trimesh.Trimesh") -> np.ndarray:
 
     Returns
     -------
-    features : (V, 6) float32 array
+    features : (V, NUM_FEATURES) float32 array
         Per-vertex feature matrix.
     """
     n_verts = len(mesh.vertices)
@@ -63,6 +65,9 @@ def compute_vertex_features(mesh: "trimesh.Trimesh") -> np.ndarray:
 
     # ── Feature 5: UV stretch ─────────────────────────────────────────────
     features[:, 5] = _uv_stretch(mesh)
+
+    # ── Feature 6: Color / texture retention cue ──────────────────────────
+    features[:, 6] = _color_texture_strength(mesh)
 
     return features
 
@@ -193,3 +198,43 @@ def _uv_stretch(mesh: "trimesh.Trimesh") -> np.ndarray:
     except Exception:
         pass
     return np.zeros(n_verts, dtype=np.float32)
+
+
+def _color_texture_strength(mesh: "trimesh.Trimesh") -> np.ndarray:
+    """Per-vertex cue for colour/texture detail that must survive decimation.
+
+    When the mesh carries UVs the texture-detail signal is the UV stretch
+    ratio (tightly packed texels = high fidelity = protect).  When the mesh
+    carries per-vertex colours instead, the signal is the colour-discontinuity
+    across adjacent edges scattered back to vertices (strong colour seams =
+    painted detail = protect).  Meshes with neither get a neutral 0.0.
+
+    This is the cue that teaches the GNN to retain colour/texture, not just
+    geometry, when it decides which edges may collapse.
+    """
+    n_verts = len(mesh.vertices)
+    result = np.zeros(n_verts, dtype=np.float32)
+    if n_verts == 0 or len(mesh.faces) == 0:
+        return result
+
+    try:
+        from ..importance.uv_density import compute_uv_density_importance, has_uvs
+
+        if has_uvs(mesh):
+            return _percentile_norm(compute_uv_density_importance(mesh))
+
+        visual = getattr(mesh, "visual", None)
+        if visual is not None and getattr(visual, "kind", None) == "vertex":
+            colors = np.asarray(visual.vertex_colors, dtype=np.float64) / 255.0
+            if colors.shape[0] == n_verts and len(colors.shape) == 2:
+                edges = mesh.edges_unique
+                delta = colors[edges[:, 0]][:, :3] - colors[edges[:, 1]][:, :3]
+                edge_diff = np.linalg.norm(delta, axis=1)
+                edge_imp = _percentile_norm(edge_diff)
+                vert_imp = np.zeros(n_verts, dtype=np.float32)
+                np.maximum.at(vert_imp, edges[:, 0], edge_imp)
+                np.maximum.at(vert_imp, edges[:, 1], edge_imp)
+                return vert_imp
+    except Exception:
+        pass
+    return result

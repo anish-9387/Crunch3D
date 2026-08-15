@@ -17,6 +17,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from .features import NUM_FEATURES
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,7 +44,7 @@ def _require_torch():
 
 
 def build_edge_importance_model(
-    in_features: int = 6,
+    in_features: int = NUM_FEATURES,
     hidden_dim: int = 64,
     num_layers: int = 3,
     heads: int = 4,
@@ -52,9 +54,9 @@ def build_edge_importance_model(
     Parameters
     ----------
     in_features : int
-        Number of input features per edge.
-        Default 6: [qem_cost, dihedral_angle, mean_curvature,
-                     gaussian_curvature, uv_stretch, boundary_flag]
+        Number of input features per vertex.  Defaults to
+        ``features.NUM_FEATURES`` (7) so the colour/texture retention cue
+        is always part of the model.
     hidden_dim : int
         Hidden dimension for GAT layers.
     num_layers : int

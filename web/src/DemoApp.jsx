@@ -6,8 +6,10 @@ import StatsPanel from './components/StatsPanel'
 import Navbar from './landing/components/Navbar'
 import {
   optimizeMesh,
+  downloadResult,
   getDownloadUrl,
   getPreviewUrl,
+  getDownloadQuota,
   getOptimizationRecommendation,
 } from './api/client'
 
@@ -60,6 +62,59 @@ export default function DemoApp({ onBackToHome }) {
   const [edgeFeatures, setEdgeFeatures] = useState(null)
   const [recommendation, setRecommendation] = useState(null)
   const [error, setError] = useState(null)
+  const [quota, setQuota] = useState(null)
+  const [downloading, setDownloading] = useState(false)
+
+  async function refreshQuota() {
+    try {
+      const q = await getDownloadQuota()
+      setQuota(q)
+    } catch {
+      // Quota is best-effort; failing to fetch it must not break the UI.
+    }
+  }
+
+  useEffect(() => {
+    refreshQuota()
+  }, [jobId, optimizedStats])
+
+  async function handleDownload() {
+    if (!jobId || downloading) return
+    setDownloading(true)
+    try {
+      const response = await downloadResult(jobId)
+      const contentType = response.headers['content-type'] || ''
+      const disposition = response.headers['content-disposition'] || ''
+      const match = disposition.match(/filename="?([^";]+)"?/)
+      const filename =
+        match?.[1] ||
+        optimizedFilename ||
+        (contentType.includes('zip') ? `optimesh_${jobId}.zip` : `optimesh_${jobId}.obj`)
+
+      // Trigger the browser download from the blob
+      const url = URL.createObjectURL(response.data)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = decodeURIComponent(filename)
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      setTimeout(() => URL.revokeObjectURL(url), 5000)
+
+      // Reflect the consumed quota in the UI
+      const remaining = response.headers['x-ratelimit-remaining']
+      if (remaining != null && quota) {
+        setQuota({ ...quota, downloads_remaining: Number(remaining) })
+      } else {
+        refreshQuota()
+      }
+    } catch (err) {
+      const msg = err?.response?.data?.detail || err?.message || 'Download failed'
+      throw new Error(msg)
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   async function applyRecommendation(jobIdValue, fromLatest = false) {
     try {
@@ -267,6 +322,9 @@ export default function DemoApp({ onBackToHome }) {
               qualityMeta={qualityMeta}
               edgeFeatures={edgeFeatures}
               downloadUrl={optimizedStats ? getDownloadUrl(jobId) : null}
+              onDownload={handleDownload}
+              quota={quota}
+              downloading={downloading}
             />
           </div>
         </div>

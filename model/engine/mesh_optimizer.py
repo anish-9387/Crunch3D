@@ -84,6 +84,9 @@ def resolve_output_extension(input_extension: str) -> str:
 def _load_components(path: str | Path) -> list[trimesh.Trimesh]:
     """
     Load a mesh file and return a flat list of Trimesh components.
+
+    Materials, textures and UV visuals are carried through so downstream
+    decimation/export never loses them.
     """
     loaded = trimesh.load(str(path), process=False)
     if isinstance(loaded, trimesh.Scene):
@@ -91,7 +94,31 @@ def _load_components(path: str | Path) -> list[trimesh.Trimesh]:
         # `dump()` can sometimes return a single mesh or a numpy array of meshes
         if isinstance(dumped, trimesh.Trimesh):
             dumped = [dumped]
-        meshes = [geom for geom in dumped if isinstance(geom, trimesh.Trimesh)]
+        meshes = []
+        for geom in dumped:
+            if not isinstance(geom, trimesh.Trimesh) or len(geom.faces) == 0:
+                continue
+            # Re-attach original visuals (texture/vertex-colour materials) — the
+            # scene dump path can strip them.
+            visual = getattr(geom, "visual", None)
+            if visual is not None and getattr(visual, "kind", None) == "none":
+                original = loaded.geometry.get(geom.name) if hasattr(geom, "name") else None
+                if original is not None and getattr(original, "visual", None) is not None:
+                    try:
+                        visual = original.visual
+                    except Exception:
+                        visual = None
+            if visual is not None:
+                try:
+                    geom = trimesh.Trimesh(
+                        vertices=geom.vertices.copy(),
+                        faces=geom.faces.copy(),
+                        visual=visual,
+                        process=False,
+                    )
+                except Exception:
+                    pass
+            meshes.append(geom)
     elif isinstance(loaded, trimesh.Trimesh):
         meshes = [loaded]
     else:
@@ -105,6 +132,7 @@ def _load_components(path: str | Path) -> list[trimesh.Trimesh]:
 
 def _component_to_pymeshlab(mesh: trimesh.Trimesh) -> pymeshlab.MeshSet:
     """Export a Trimesh component to a temp OBJ, load it into a fresh MeshSet."""
+    _ensure_uv_material(mesh)
     tmp = tempfile.NamedTemporaryFile(suffix=".obj", delete=False)
     tmp_path = tmp.name
     tmp.close()
@@ -149,6 +177,76 @@ def _safe_remove(path: str) -> None:
         pass
 
 
+def _scene_merge(parts: list[trimesh.Trimesh]) -> trimesh.Trimesh:
+    """Merge components while keeping each part's UVs and materials.
+
+    ``trimesh.util.concatenate`` silently drops texture visuals (and can
+    raise when two parts carry different materials).  Round-tripping the
+    parts through a multi-object OBJ export/import preserves per-part UVs
+    and material references, which is exactly what multi-group GLB/OBJ
+    uploads need.
+    """
+    scene = trimesh.Scene()
+    for idx, part in enumerate(parts):
+        _ensure_uv_material(part)
+        scene.add_geometry(
+            part,
+            node_name=f"mesh_{idx}",
+            geom_name=f"geo_{idx}",
+            parent_node_name=None,
+        )
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".obj", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    try:
+        scene.export(tmp_path)
+        loaded = trimesh.load(tmp_path, process=False)
+        if isinstance(loaded, trimesh.Scene):
+            geoms = [g for g in loaded.geometry.values()
+                     if isinstance(g, trimesh.Trimesh) and len(g.faces) > 0]
+            if not geoms:
+                raise RuntimeError("Scene merge produced no geometry")
+            merged = trimesh.util.concatenate(geoms)
+        else:
+            merged = loaded
+        return _ensure_uv_material(merged)
+    finally:
+        # Clean up the .obj plus any sidecar .mtl / texture files
+        import glob as _glob
+        for side in _glob.glob(tmp_path[:-4] + ".*"):
+            _safe_remove(side)
+
+
+def _ensure_uv_material(mesh: trimesh.Trimesh) -> trimesh.Trimesh | None:
+    """Keep UV coordinates when exporting a mesh that carries them.
+
+    Trimesh's OBJ/GLB writers silently drop ``vt`` texture coordinates when
+    the visual has UVs but no material attached (e.g. after a scene dump,
+    a concatenate, or loading a UV-only mesh).  That is the root cause of
+    "the texture completely changed" — the geometry survives but the UV map
+    vanishes, so the model renders with a broken/untextured surface.
+
+    When UVs exist but the material is missing, attach a minimal unnamed
+    SimpleMaterial so writers emit the UV data.  Returns the same mesh.
+    """
+    try:
+        visual = getattr(mesh, "visual", None)
+        if visual is None or getattr(visual, "kind", None) != "texture":
+            return mesh
+        if visual.uv is None:
+            return mesh
+        if getattr(visual, "material", None) is None:
+            from trimesh.visual.material import SimpleMaterial
+            mesh.visual = trimesh.visual.TextureVisuals(
+                uv=np.asarray(visual.uv, dtype=np.float64),
+                material=SimpleMaterial(name="material"),
+            )
+    except Exception as exc:
+        logger.debug("UV material guard failed: %s", exc)
+    return mesh
+
+
 # ---------------------------------------------------------------------------
 # Helpers — texture-aware export
 # ---------------------------------------------------------------------------
@@ -171,6 +269,7 @@ def _export_mesh_with_texture_tracking(
     warnings: list[str] = []
 
     try:
+        _ensure_uv_material(mesh)
         mesh.export(output_path)
     except Exception as exc:
         warnings.append(f"Standard trimesh export failed: {exc}")
@@ -368,14 +467,18 @@ def _inject_importance_as_quality(ms: pymeshlab.MeshSet, importance: np.ndarray)
     PyMeshLab's weighted QEM reads from this field when qualityweight=True.
     Higher quality = protected from collapse.
 
-    PyMeshLab 2025.7's Python API does not expose a setter for the main
-    vertex-scalar (quality) array.  We work around this via a PLY round-trip:
+    This is done fully in-memory:
 
-      1. Save the current mesh as an ASCII PLY  (no vertex colors).
-      2. Inject vertex-color properties that encode importance as grey-scale
-         (R=G=B=importance*255, A=255).
-      3. Reload the edited PLY, replacing the original mesh in *ms*.
-      4. Derive the quality field from the colour channel: q = (r+g+b)/(3*255).
+      1. Write importance as grey-scale vertex colours through the writable
+         ``vertex_color_matrix()`` numpy view (R=G=B=importance, A=1).
+      2. Derive the quality scalar from the colour channel with
+         ``compute_scalar_by_function_per_vertex``: q = (r+g+b)/(3*255).
+      3. Restore the mesh's original vertex colours.
+
+    Unlike the old PLY round-trip, the mesh is never written to disk, so UV
+    coordinates, materials and texture maps are preserved exactly — a model
+    with a texture keeps that texture, and a model with baked vertex colours
+    keeps those colours.
 
     Returns True if the injection succeeded, False if decimation will run
     without the quality scalar.
@@ -387,100 +490,29 @@ def _inject_importance_as_quality(ms: pymeshlab.MeshSet, importance: np.ndarray)
         )
         return False
 
-    # High importance → high quality → protected from collapse
-    # (qualityweight penalises LOW quality, making those edges more
-    #  likely to collapse, so we pass importance directly).
     quality = np.clip(importance.astype(np.float64), 0.0, 1.0)
 
-    colour_byte = (quality * 255.0).astype(np.uint8)
-
-    # ── 1. Save current mesh as ASCII PLY (no colours) ────────────
-    fd_plain, path_plain = tempfile.mkstemp(suffix=".ply")
-    os.close(fd_plain)
-    fd_colour, path_colour = tempfile.mkstemp(suffix="_clr.ply")
-    os.close(fd_colour)
-
     try:
-        ms.save_current_mesh(path_plain, binary=False, save_vertex_color=False)
+        mesh = ms.current_mesh()
+        colors = mesh.vertex_color_matrix()          # (N, 4) writable view
 
-        # ── 2. Read + modify PLY ──────────────────────────────────
-        with open(path_plain, encoding="ascii") as f:
-            content = f.read()
-        lines = content.rstrip("\n").split("\n")
+        original_colors = np.array(colors, copy=True)
+        rgb = np.column_stack([quality, quality, quality, np.ones_like(quality)])
+        colors[:] = rgb
 
-        header_end = -1
-        for i, line in enumerate(lines):
-            if line == "end_header":
-                header_end = i
-                break
-        if header_end == -1:
-            return False
-
-        num_vertices = 0
-        for line in lines[:header_end]:
-            if line.startswith("element vertex"):
-                num_vertices = int(line.split()[-1])
-                break
-
-        if num_vertices != n_verts:
-            return False
-
-        # Build new header with vertex-color properties.
-        # Insert colour properties just BEFORE `element face`.
-        new_lines: list[str] = []
-        for line in lines:
-            if line.startswith("element face"):
-                new_lines.extend([
-                    "property uchar red",
-                    "property uchar green",
-                    "property uchar blue",
-                    "property uchar alpha",
-                ])
-            new_lines.append(line)
-
-        shift = 4
-        new_header_end = header_end + shift
-
-        # Inject colour values into vertex-data lines.
-        # Original vertex lines have form: x y z quality
-        # We append 4 colour values, overwriting the line.
-        for v_idx in range(num_vertices):
-            orig_idx = header_end + 1 + v_idx
-            new_idx = new_header_end + 1 + v_idx
-            coords = lines[orig_idx].strip()
-            c = int(colour_byte[v_idx])
-            new_lines[new_idx] = f"{coords} {c} {c} {c} 255"
-
-        with open(path_colour, "w", encoding="ascii") as f:
-            f.write("\n".join(new_lines) + "\n")
-
-        # ── 3. Load colour PLY into the SAME MeshSet ─────────────
-        old_id = ms.current_mesh_id()
-        ms.load_new_mesh(path_colour)            # becomes current
-
-        # ── 4. Derive quality (= scalar) from RGB ────────────────
         ms.apply_filter(
             "compute_scalar_by_function_per_vertex",
             q="(r+g+b)/(3*255)",
             normalize=False,
         )
 
-        # ── 5. Delete the original (uncoloured) mesh ─────────────
-        ms.set_current_mesh(old_id)
-        ms.delete_current_mesh()
-
+        # Restore original colours so texture/colour output is untouched.
+        colors[:] = original_colors
         return True
 
     except Exception as exc:
         logger.warning("Importance injection failed: %s. Falling back to plain QEM.", exc)
         return False
-
-    finally:
-        for p in (path_plain, path_colour):
-            try:
-                os.unlink(p)
-            except OSError:
-                pass
 
 
 def _apply_edge_feature_protection(
@@ -760,9 +792,13 @@ def _decimate_all_components(
         raise RuntimeError("All mesh components failed decimation")
 
     if len(output_parts) == 1:
-        return output_parts[0]
+        return _ensure_uv_material(output_parts[0])
 
-    return trimesh.util.concatenate(output_parts)
+    try:
+        return _scene_merge(output_parts)
+    except Exception as exc:
+        logger.warning("Scene merge failed (%s), falling back to concatenate.", exc)
+        return trimesh.util.concatenate(output_parts)
 
 
 # ---------------------------------------------------------------------------
@@ -956,11 +992,39 @@ def decimate_mesh(
     max_deviation_percent: float = 2.0,
     max_target_overshoot_percent: float = 12.0,
     use_importance: bool = True,       # v1.1: importance-weighted QEM
+    job_id: str | None = None,         # self-learning sample tagging
 ) -> tuple[MeshStats, dict]:
     input_path = str(input_path)
     output_path = str(output_path)
 
     _timing_reset()
+
+    # ── Self-learning capture ─────────────────────────────────────────────
+    def _emit_training_sample(
+        components_: list[trimesh.Trimesh],
+        component_importance_: list[np.ndarray] | None,
+        stats_: MeshStats,
+        deviation_: float | None,
+    ) -> None:
+        if not job_id or component_importance_ is None:
+            return
+        try:
+            from ..learning.continuous_learning import record_training_sample
+            record_training_sample(
+                components_,
+                component_importance_,
+                job_id=job_id,
+                outcome={
+                    "reduction_percent": (
+                        round((1 - stats_.face_count / total_faces) * 100, 2)
+                        if total_faces > 0 else 0.0
+                    ),
+                    "quality_deviation_percent": deviation_ or 0.0,
+                    "faces_out": stats_.face_count,
+                },
+            )
+        except Exception:
+            logger.debug("Training sample capture skipped", exc_info=True)
 
     # ── 1. Load all components ──────────────────────────────────────────────
     components = _load_components(input_path)
@@ -973,8 +1037,11 @@ def decimate_mesh(
 
     # ── 2. Skip decimation if mesh is already at or below target ───────────
     if total_faces <= 4 or target_faces >= total_faces:
-        combined = (trimesh.util.concatenate(components)
-                    if len(components) > 1 else components[0])
+        combined = (
+            _scene_merge(components)
+            if len(components) > 1
+            else _ensure_uv_material(components[0])
+        )
         combined.export(output_path)
         stats = _stats_from_trimesh(combined, output_path)
         _timing_report()
@@ -1068,6 +1135,7 @@ def decimate_mesh(
             break
 
         if deviation is not None and deviation <= max_deviation_percent:
+            _emit_training_sample(components, component_importance, stats, deviation)
             _timing_report()
             return stats, {
                 "target_faces_used": stats.face_count,
@@ -1088,6 +1156,7 @@ def decimate_mesh(
     if strict_quality and quality_ref is not None and last_deviation is not None:
         quality_guard_satisfied = last_deviation <= max_deviation_percent
 
+    _emit_training_sample(components, component_importance, last_stats, last_deviation)
     _timing_report()
     return last_stats, {
         "target_faces_used": last_stats.face_count,
@@ -1154,8 +1223,11 @@ def generate_lods(
 
         if ratio >= 1.0:
             # LOD0 — just re-export the original without touching it
-            combined = (trimesh.util.concatenate(components)
-                        if len(components) > 1 else components[0])
+            combined = (
+                _scene_merge(components)
+                if len(components) > 1
+                else _ensure_uv_material(components[0])
+            )
             combined.export(str(output_file))
             result_mesh = combined
         else:
@@ -1167,6 +1239,7 @@ def generate_lods(
                 component_importance=component_importance,
                 cache=_importance_cache,
             )
+            _ensure_uv_material(result_mesh)
             result_mesh.export(str(output_file))
 
         file_size = os.path.getsize(output_file)

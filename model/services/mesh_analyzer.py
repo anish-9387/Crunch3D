@@ -55,9 +55,11 @@ def _load_components(path: str | Path) -> list[trimesh.Trimesh]:
             verts = trimesh.transformations.transform_points(
                 geom.vertices.copy(), transform
             )
+            # Keep the visual so UV/texture statistics are reported correctly.
             transformed = trimesh.Trimesh(
                 vertices=verts,
                 faces=geom.faces.copy(),
+                visual=geom.visual,
                 process=False,
             )
             meshes.append(transformed)

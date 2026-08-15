@@ -48,7 +48,24 @@ Surface curvature analysis (mean curvature via cotangent Laplacian) generates pe
 The importance map is visualized in the 3D viewer as a color-coded heatmap overlay (red = high importance, blue = low importance).
 
 ### GNN Edge Importance Prediction
-A **Graph Attention Network (GATConv)** predicts per-edge importance scores from the 19-cue edge feature vector (see below). The GNN is trained self-supervised against geometric error targets, so no human labelling is required. The predicted scores modulate the QEM collapse cost.
+A **Graph Attention Network (GATConv)** predicts per-edge importance scores from a 7-cue vertex feature vector (mean/Gaussian curvature, dihedral angle, valence, boundary flag, UV stretch and a colour/texture retention cue). The GNN is trained self-supervised against geometric error targets, so no human labelling is required. The predicted scores modulate the QEM collapse cost.
+
+### Self-Learning AI (learns from every optimization)
+The GNN does not sit still. Every completed optimization captures a downsampled graph sample of the mesh it just processed (with the colour/texture cues and the importance decisions the run actually used), and a background task periodically fine-tunes the model on the accumulated dataset — **the AI keeps learning on its own by doing the job**. On top of real runs, a procedural dataset generator bootstraps the model with hundreds of randomized primitives (noise-warped surfaces + baked vertex colours) so training starts from a large, varied dataset. See `GET /api/learning/status`.
+
+### Upload & Result Storage on Cloudflare R2
+Meshes, optimized outputs and per-job metadata are stored in an **S3-compatible object bucket** — Cloudflare R2 recommended ($0 egress on downloads, S3 API, 10 GB free tier). Any S3-compatible provider (AWS S3, MinIO, Backblaze B2) works by just changing the endpoint.
+
+With `STORAGE_BACKEND=cloud` the bucket is the **authoritative store**:
+- raw uploads, every optimized output and LOD, and per-job metadata are **required** to land in the bucket (the API fails with 500 instead of silently degrading),
+- **all previews and downloads stream from the bucket** — never from the container's disk,
+- the local filesystem is only an ephemeral working cache for the mesh engine (it can be wiped at any time; jobs survive restarts and re-optimization re-pulls inputs from the bucket),
+- missing bucket credentials fail fast at startup with a clear error.
+
+`STORAGE_BACKEND=local` keeps the pure-local behavior for development.
+
+### Daily Download Quota
+Users may optimize as many times as they want, but each client can download at most **5 optimized results per rolling 24h** (configurable via `MAX_DOWNLOADS_PER_DAY`). The quota is anonymous-device based (`X-Client-Id` header) with IP fallback, persisted in SQLite, and surfaced in the UI as "X of 5 downloads left today".
 
 ### 19-Cue Edge Feature Extraction
 Every candidate edge is described by a fixed-length, fixed-order feature vector computed in `importance/edge_features.py`. The cues span geometry, appearance, rigging and view-dependence:
@@ -279,7 +296,10 @@ sequenceDiagram
 | `GET` | `/api/status/{job_id}` | Status: uploaded / processing / completed / failed |
 | `GET` | `/api/preview/{job_id}` | Stream mesh for the Three.js viewer |
 | `GET` | `/api/importance/{job_id}` | Get per-vertex importance scores |
-| `GET` | `/api/download/{job_id}` | Download optimized file or multi-LOD ZIP |
+| `GET` | `/api/download/{job_id}` | Download optimized file or multi-LOD ZIP (5 downloads/24h/client) |
+| `GET` | `/api/download/quota` | Remaining daily downloads for the calling client |
+| `GET` | `/api/learning/status` | Self-learning AI snapshot: dataset size, last retrain, checkpoint |
+| `POST` | `/api/learning/retrain` | Manually trigger one GNN fine-tuning pass |
 | `DELETE` | `/api/job/{job_id}` | Delete job and clean up temp files |
 
 Interactive docs at **http://localhost:8000/docs** when the backend is running.
@@ -538,7 +558,20 @@ CORS_ORIGIN_REGEX=https://.*\.vercel\.app
 VITE_API_BASE_URL=http://localhost:8000
 ```
 
-No API keys required.
+**Cloud storage (optional):** set `STORAGE_BACKEND=cloud` and fill in the
+`CLOUD_STORAGE_*` vars. With Cloudflare R2: create a bucket, create an R2
+API token, and use `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` as the
+endpoint. With `STORAGE_BACKEND=local` (default) everything stays on disk.
+
+**Daily download quota (optional):** `MAX_DOWNLOADS_PER_DAY=5` caps
+downloads per client per rolling 24h (optimizations are unlimited).
+
+**Self-learning AI (optional):** `LEARNING_AUTO_RETRAIN=true` enables the
+background dataset capture + retrain loop; `SEED_DATASET_COUNT=800` controls
+the procedurally generated training dataset size. Disable for a
+dependency-light deployment (torch/torch-geometric are optional anyway).
+
+No API keys are required for the local default configuration.
 
 ---
 
@@ -568,6 +601,7 @@ The Vite dev server proxies all `/api/*` calls to port 8000 automatically.
 
 - **Output format** - GLB/GLTF and FBX inputs are processed but saved as OBJ (PyMeshLab constraint)
 - **Rigged meshes** - Skinned/animated meshes with bone weights are not supported. Static meshes only. Animation *zones* are detected but skinning is not preserved.
-- **Job persistence** - Jobs are stored in memory with filesystem fallback. Restarting the backend clears in-memory state.
+- **Job persistence** - Jobs are stored in memory with filesystem fallback. Restarting the backend clears in-memory state (durable copies live in the object bucket when cloud storage is enabled).
 - **Concurrency** - No async job queue (planned for v2.0). Large meshes block during decimation.
-- **GNN training** - The training loop is a scaffold. It bootstraps from logged optimization events, so model quality scales with how many meshes have been processed.
+- **GNN training** - The model fine-tunes continuously from captured optimization runs plus the procedural seed dataset; quality scales with how many meshes have been processed.
+- **Texture preservation** - UV coordinates, materials and texture maps survive decimation (in-memory importance injection, no file round-trips); multi-material scenes degrade to the first material on merge.

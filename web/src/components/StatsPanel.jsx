@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import EdgeFeaturePanel from './EdgeFeaturePanel'
 
 export default function StatsPanel({
@@ -8,7 +9,12 @@ export default function StatsPanel({
   qualityMeta,
   downloadUrl,
   edgeFeatures,
+  onDownload,
+  quota,
+  downloading,
 }) {
+  const [error, setError] = useState(null)
+
   if (!original) return null
 
   const reductionPercent =
@@ -20,6 +26,24 @@ export default function StatsPanel({
     optimized && original.file_size_mb > 0
       ? Math.round((1 - optimized.file_size_mb / original.file_size_mb) * 100)
       : null
+
+  const quotaBanner =
+    optimized && quota && quota.daily_limit > 0
+      ? `${Math.max(quota.downloads_remaining, 0)} of ${quota.daily_limit} downloads left today`
+      : null
+
+  const handleDownload = async () => {
+    setError(null)
+    try {
+      await onDownload()
+    } catch (err) {
+      const msg =
+        err?.response?.data?.detail ||
+        err?.message ||
+        'Download failed'
+      setError(msg)
+    }
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -142,10 +166,23 @@ export default function StatsPanel({
 
       {downloadUrl && (
         <div className="download-bar">
-          <span>Optimization complete - ready to download</span>
-          <a href={downloadUrl} className="download-btn" download>
-            Download Result
-          </a>
+          <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            Optimization complete - ready to download
+            {quotaBanner && (
+              <small style={{ color: 'var(--text-secondary)' }}>
+                {quotaBanner}
+              </small>
+            )}
+          </span>
+          <button
+            className="download-btn"
+            onClick={handleDownload}
+            disabled={downloading}
+            style={{ border: 'none', cursor: downloading ? 'progress' : 'pointer' }}
+          >
+            {downloading ? 'Downloading...' : 'Download Result'}
+          </button>
+          {error && <div className="error-msg" style={{ width: '100%' }}>{error}</div>}
         </div>
       )}
     </div>
