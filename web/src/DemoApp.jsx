@@ -75,7 +75,9 @@ export default function DemoApp({ onBackToHome }) {
   }
 
   useEffect(() => {
-    refreshQuota()
+    if (jobId || optimizedStats) {
+      refreshQuota()
+    }
   }, [jobId, optimizedStats])
 
   async function handleDownload() {

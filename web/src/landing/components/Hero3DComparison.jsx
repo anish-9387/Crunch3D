@@ -158,7 +158,7 @@ export default function Hero3DComparison() {
         </div>
       </div>
 
-      <style jsx>{`
+      <style>{`
         .comparison-slider::-webkit-slider-thumb {
           -webkit-appearance: none;
           appearance: none;
