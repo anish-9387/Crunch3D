@@ -756,6 +756,205 @@ input[type="range"] {
   font-size: 0.82rem;
 }
 
+/* Android browsers have limited horizontal space and may reserve a safe-area
+   inset in standalone mode. Keep the existing desktop layout unchanged and
+   adapt the demo only below the tablet breakpoint. */
+@media (max-width: 640px) {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    min-width: 320px;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  body[data-view="demo"]::before {
+    background-size: 22px 22px;
+    opacity: 0.2;
+  }
+
+  .app {
+    width: 100%;
+    padding: 14px 12px 24px;
+  }
+
+  .header {
+    align-items: flex-start;
+    padding: 6px 0 16px;
+    margin-bottom: 12px;
+  }
+
+  .header h1 {
+    font-size: 1.7rem;
+    letter-spacing: 0.06em;
+  }
+
+  .header p {
+    max-width: 190px;
+    line-height: 1.25;
+  }
+
+  .header-actions {
+    flex-shrink: 0;
+    gap: 6px;
+  }
+
+  .viewer-btn,
+  .optimize-btn,
+  .download-btn {
+    min-height: 44px;
+  }
+
+  .viewer-btn {
+    padding: 8px 10px;
+  }
+
+  .upload-zone {
+    min-height: 270px;
+    padding: 56px 20px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .upload-zone h2 {
+    font-size: 1.2rem;
+  }
+
+  .upload-zone p {
+    line-height: 1.45;
+  }
+
+  .main-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  .main-layout > .sidebar {
+    order: 2;
+  }
+
+  .main-layout > div:not(.sidebar) {
+    order: 1;
+  }
+
+  .card {
+    padding: 14px;
+    border-radius: 12px;
+  }
+
+  .card:hover {
+    transform: none;
+  }
+
+  .preset-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 7px;
+  }
+
+  .preset-btn {
+    min-height: 72px;
+    padding: 9px 6px;
+  }
+
+  .preset-btn .label {
+    font-size: 0.72rem;
+    line-height: 1.15;
+  }
+
+  .preset-btn .count {
+    font-size: 0.62rem;
+  }
+
+  .viewer-container,
+  .viewer-split {
+    height: min(72vh, 430px);
+    min-height: 300px;
+  }
+
+  .viewer-container canvas {
+    touch-action: none;
+  }
+
+  .viewer-split {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 4px;
+  }
+
+  .viewer-split .viewer-container {
+    min-height: 0;
+  }
+
+  .viewer-controls {
+    justify-content: stretch;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+
+  .viewer-controls::-webkit-scrollbar {
+    display: none;
+  }
+
+  .viewer-controls .viewer-btn {
+    flex: 1 0 auto;
+    white-space: nowrap;
+  }
+
+  .inspector {
+    min-height: 0;
+    max-height: 360px;
+    height: auto;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .stat-item {
+    padding: 11px;
+  }
+
+  .stat-item .value {
+    font-size: 1.12rem;
+    overflow-wrap: anywhere;
+  }
+
+  .download-bar {
+    position: sticky;
+    bottom: 10px;
+    z-index: 30;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 9px;
+    padding: 12px;
+    box-shadow: var(--shadow);
+  }
+
+  .download-btn {
+    width: 100%;
+  }
+
+  .sidebar .optimize-btn {
+    position: sticky;
+    bottom: 12px;
+    z-index: 25;
+    box-shadow: var(--shadow);
+  }
+
+  .app-footer {
+    margin-top: 32px;
+    padding: 22px 0 12px;
+    flex-direction: column;
+    gap: 10px;
+  }
+}
+
 /* Edge-cue readout — one row per geometric/appearance/view signal the
    importance model consumed for this mesh. */
 .edge-groups {
