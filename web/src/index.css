@@ -756,6 +756,10 @@ input[type="range"] {
   font-size: 0.82rem;
 }
 
+.mobile-bottom-nav {
+  display: none;
+}
+
 /* Android browsers have limited horizontal space and may reserve a safe-area
    inset in standalone mode. Keep the existing desktop layout unchanged and
    adapt the demo only below the tablet breakpoint. */
@@ -769,6 +773,85 @@ input[type="range"] {
     padding-bottom: env(safe-area-inset-bottom);
   }
 
+  .landing-shell {
+    padding-bottom: 84px;
+  }
+
+  .site-navbar {
+    position: relative;
+  }
+
+  .site-navbar > div:first-child {
+    display: none;
+  }
+
+  .mobile-bottom-nav {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    z-index: 60;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+    padding: 7px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 18px;
+    background: color-mix(in srgb, #0b0b0b 92%, transparent);
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.52);
+    backdrop-filter: blur(16px);
+  }
+
+  .mobile-bottom-nav a,
+  .mobile-bottom-nav button {
+    min-height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 4px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: #77777d;
+    font: inherit;
+    font-size: 0.66rem;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .mobile-bottom-nav svg {
+    width: 19px;
+    height: 19px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .mobile-bottom-nav button svg {
+    fill: currentColor;
+    stroke: none;
+  }
+
+  .mobile-bottom-nav a.active,
+  .mobile-bottom-nav button:active,
+  .mobile-bottom-nav a:active {
+    color: #ff6b6b;
+    background: rgba(255, 59, 59, 0.12);
+  }
+
+  .landing-shell .mobile-bottom-nav button {
+    color: #f2f2f2;
+    background: #e02b2b;
+  }
+
+  .landing-shell .mobile-bottom-nav button:active {
+    background: #ff3b3b;
+  }
+
   body[data-view="demo"]::before {
     background-size: 22px 22px;
     opacity: 0.2;
@@ -776,7 +859,7 @@ input[type="range"] {
 
   .app {
     width: 100%;
-    padding: 14px 12px 24px;
+    padding: 14px 12px 104px;
   }
 
   .header {
@@ -927,7 +1010,7 @@ input[type="range"] {
 
   .download-bar {
     position: sticky;
-    bottom: 10px;
+    bottom: 84px;
     z-index: 30;
     align-items: stretch;
     flex-direction: column;
@@ -942,7 +1025,7 @@ input[type="range"] {
 
   .sidebar .optimize-btn {
     position: sticky;
-    bottom: 12px;
+    bottom: 84px;
     z-index: 25;
     box-shadow: var(--shadow);
   }

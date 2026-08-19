@@ -2,7 +2,7 @@ import Navbar from './components/Navbar'
 
 export default function Layout({ children, onTryDemo }) {
   return (
-    <div className="w-full min-h-screen bg-brand-black text-brand-white selection:bg-brand-red/30">
+    <div className="landing-shell w-full min-h-screen bg-brand-black text-brand-white selection:bg-brand-red/30">
       <div className="max-w-[1400px] mx-auto px-6 py-6 md:py-8 flex flex-col gap-8 md:gap-14 lg:gap-16">
         <Navbar onTryDemo={onTryDemo} />
 

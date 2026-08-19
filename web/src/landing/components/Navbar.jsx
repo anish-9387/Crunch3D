@@ -16,7 +16,7 @@ export default function Navbar({ onTryDemo, ctaLabel = 'Try Demo', active = 'lan
   const href = (hash) => (isDemo ? `/${hash}` : hash)
 
   return (
-    <nav className="flex justify-center items-center w-full z-50">
+    <nav className="site-navbar flex justify-center items-center w-full z-50">
       <div className="flex items-center gap-1.5 flex-wrap justify-center">
         <div className="flex items-center gap-2.5 px-6 py-[10px] bg-[#0A0A0A] border border-white/5 rounded-[14px] cursor-pointer hover:bg-[#111111] transition-colors">
           <svg
@@ -72,6 +72,27 @@ export default function Navbar({ onTryDemo, ctaLabel = 'Try Demo', active = 'lan
           <svg className="w-2 h-2 text-[#F2F2F2] fill-current" viewBox="0 0 24 24">
             <path d="M8 5v14l11-7z" />
           </svg>
+        </button>
+      </div>
+
+      <div className="mobile-bottom-nav" aria-label="Mobile navigation">
+        <a className={!isDemo ? 'active' : ''} href={isDemo ? '/' : '#top'}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z" />
+          </svg>
+          <span>Home</span>
+        </a>
+        <a className={!isDemo ? '' : 'active'} href={isDemo ? '/#about' : '#features'}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 5h16v14H4zM8 9h8M8 13h5" />
+          </svg>
+          <span>{isDemo ? 'Guide' : 'Features'}</span>
+        </a>
+        <button type="button" onClick={onTryDemo}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          <span>{isDemo ? 'Home' : ctaLabel}</span>
         </button>
       </div>
     </nav>
