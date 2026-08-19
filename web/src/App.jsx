@@ -3,6 +3,7 @@ import DemoApp from './DemoApp'
 import LandingPage from './landing/LandingPage'
 
 const DEMO_PATH = '/demo'
+const MOBILE_LAST_PATH_KEY = 'crunch3d-mobile-last-path'
 
 function normalizePath(pathname) {
   if (!pathname) return '/'
@@ -12,8 +13,20 @@ function normalizePath(pathname) {
   return pathname
 }
 
+function isMobileViewport() {
+  return typeof window !== 'undefined' && window.matchMedia?.('(max-width: 640px)').matches
+}
+
+function getInitialPath() {
+  const currentPath = normalizePath(window.location.pathname)
+  if (currentPath !== '/' || !isMobileViewport()) return currentPath
+
+  const savedPath = window.localStorage.getItem(MOBILE_LAST_PATH_KEY)
+  return savedPath === DEMO_PATH ? DEMO_PATH : '/'
+}
+
 export default function App() {
-  const [path, setPath] = useState(() => normalizePath(window.location.pathname))
+  const [path, setPath] = useState(getInitialPath)
 
   useEffect(() => {
     const handlePopState = () => setPath(normalizePath(window.location.pathname))
@@ -30,6 +43,12 @@ export default function App() {
 
   useEffect(() => {
     document.body.setAttribute('data-view', path === DEMO_PATH ? 'demo' : 'landing')
+  }, [path])
+
+  useEffect(() => {
+    if (isMobileViewport()) {
+      window.localStorage.setItem(MOBILE_LAST_PATH_KEY, path)
+    }
   }, [path])
 
   useEffect(
