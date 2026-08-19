@@ -47,6 +47,9 @@ export default function App() {
 
   useEffect(() => {
     if (isMobileViewport()) {
+      if (path === DEMO_PATH && normalizePath(window.location.pathname) !== DEMO_PATH) {
+        window.history.replaceState({}, '', DEMO_PATH)
+      }
       window.localStorage.setItem(MOBILE_LAST_PATH_KEY, path)
     }
   }, [path])
