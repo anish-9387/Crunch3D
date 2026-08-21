@@ -81,11 +81,14 @@ export default function Hero3DComparison() {
 
   const [inViewRef, setInViewRef] = useState(null)
   const [inView, setInView] = useState(true)
+  const [hasBeenVisible, setHasBeenVisible] = useState(false)
 
   useEffect(() => {
     if (!inViewRef) return
     const observer = new IntersectionObserver(([entry]) => {
-      setInView(entry.isIntersecting)
+      const visible = entry.isIntersecting
+      setInView(visible)
+      if (visible) setHasBeenVisible(true)
     }, { rootMargin: '400px' })
     observer.observe(inViewRef)
     return () => observer.disconnect()
@@ -95,29 +98,32 @@ export default function Hero3DComparison() {
     <div ref={setInViewRef} className="absolute inset-0 w-full h-full z-0 overflow-hidden pointer-events-auto">
       
       {/* 3D Canvas */}
-      {!inView && (
+      {!hasBeenVisible && (
         <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none">
           <div className="w-8 h-8 border-4 border-[#FF3B3B]/20 border-t-[#FF3B3B] rounded-full animate-spin" />
         </div>
       )}
 
-      {inView && (
-        <Canvas
-          camera={{ position: [0, 0, 5], fov: 45 }}
-          gl={{ antialias: true, alpha: true, localClippingEnabled: true, powerPreference: "default" }}
-          dpr={[1, 1.5]}
-        >
-          <ambientLight intensity={1.5} />
-          <spotLight position={[5, 10, 5]} intensity={3} penumbra={1} angle={0.5} />
-          <directionalLight position={[-5, 5, -5]} intensity={1} />
-          
-          <Suspense fallback={<Loader />}>
-            <Models sliderRef={sliderRef} />
-          </Suspense>
-          
-          <ContactShadows position={[0, -2.6, 0]} opacity={0.5} scale={10} blur={2} />
-          <Environment preset="city" />
-        </Canvas>
+      {hasBeenVisible && (
+        <div style={{ visibility: inView ? 'visible' : 'hidden', width: '100%', height: '100%' }}>
+          <Canvas
+            camera={{ position: [0, 0, 5], fov: 45 }}
+            gl={{ antialias: true, alpha: true, localClippingEnabled: true, powerPreference: "default" }}
+            dpr={[1, 1.5]}
+            frameloop={inView ? 'always' : 'never'}
+          >
+            <ambientLight intensity={1.5} />
+            <spotLight position={[5, 10, 5]} intensity={3} penumbra={1} angle={0.5} />
+            <directionalLight position={[-5, 5, -5]} intensity={1} />
+            
+            <Suspense fallback={<Loader />}>
+              <Models sliderRef={sliderRef} />
+            </Suspense>
+            
+            <ContactShadows position={[0, -2.6, 0]} opacity={0.5} scale={10} blur={2} />
+            <Environment preset="city" />
+          </Canvas>
+        </div>
       )}
 
       {/* HTML Slider UI Overlay */}

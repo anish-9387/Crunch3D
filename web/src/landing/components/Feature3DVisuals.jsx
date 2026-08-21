@@ -3,15 +3,20 @@ import { Canvas, useFrame } from '@react-three/fiber'
 import { useGLTF, Float, Environment, ContactShadows, Html, Center, PerspectiveCamera } from '@react-three/drei'
 import * as THREE from 'three'
 
-// Optimization: Only run WebGL context and render loop when the canvas is actually visible on screen
+// Optimization: mount WebGL context once the canvas enters the viewport, then
+// keep it alive forever. When off-screen we pause the render loop and hide
+// with CSS visibility so the GPU idles but models stay in memory.
 function ViewportCanvas({ children, ...props }) {
   const [ref, setRef] = useState(null)
   const [inView, setInView] = useState(false)
+  const [hasBeenVisible, setHasBeenVisible] = useState(false)
 
   useEffect(() => {
     if (!ref) return
     const observer = new IntersectionObserver(([entry]) => {
-      setInView(entry.isIntersecting)
+      const visible = entry.isIntersecting
+      setInView(visible)
+      if (visible) setHasBeenVisible(true)
     }, { rootMargin: '200px' }) // Start rendering 200px before it comes into view
     observer.observe(ref)
     return () => observer.disconnect()
@@ -19,28 +24,30 @@ function ViewportCanvas({ children, ...props }) {
 
   return (
     <div ref={setRef} className="absolute inset-0 z-0 w-full h-full flex items-center justify-center">
-      {/* Show loading spinner while mounting or if unmounted */}
-      {!inView && (
+      {/* Show loading spinner only before first mount */}
+      {!hasBeenVisible && (
         <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none">
           <div className="w-6 h-6 border-2 border-[#FF3B3B]/20 border-t-[#FF3B3B] rounded-full animate-spin mb-2" />
           <span className="text-white/30 text-[10px] tracking-widest font-bold">STANDBY</span>
         </div>
       )}
       
-      {/* Conditionally mount to completely free WebGL context on mobile/low-end devices */}
-      {inView && (
-        <Canvas dpr={[1, 1.5]} {...props}>
-          <Suspense fallback={
-            <Html center>
-              <div className="flex flex-col items-center justify-center">
-                <div className="w-6 h-6 border-2 border-[#00E5FF]/20 border-t-[#00E5FF] rounded-full animate-spin mb-2" />
-                <span className="text-white/50 text-[10px] tracking-widest font-bold">LOADING</span>
-              </div>
-            </Html>
-          }>
-            {children}
-          </Suspense>
-        </Canvas>
+      {/* Mount once, then keep alive. Pause render loop when off-screen. */}
+      {hasBeenVisible && (
+        <div style={{ visibility: inView ? 'visible' : 'hidden', width: '100%', height: '100%' }}>
+          <Canvas dpr={[1, 1.5]} frameloop={inView ? 'always' : 'never'} {...props}>
+            <Suspense fallback={
+              <Html center>
+                <div className="flex flex-col items-center justify-center">
+                  <div className="w-6 h-6 border-2 border-[#00E5FF]/20 border-t-[#00E5FF] rounded-full animate-spin mb-2" />
+                  <span className="text-white/50 text-[10px] tracking-widest font-bold">LOADING</span>
+                </div>
+              </Html>
+            }>
+              {children}
+            </Suspense>
+          </Canvas>
+        </div>
       )}
     </div>
   )

@@ -9,9 +9,104 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Crunch3d - 3D Mesh Optimizer</title>
     <link rel="icon" type="image/svg+xml" href="/icons/crunch3d-icon.svg" />
+
+    <!-- Critical inline preloader styles — render before any bundle -->
+    <style>
+      .preloader-inline {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0b0b0b;
+        transition: opacity 0.5s ease;
+      }
+      .preloader-inline.hidden { opacity: 0; pointer-events: none; }
+      .preloader-inline__content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 28px;
+      }
+      .preloader-inline__cube-wrap {
+        width: 80px; height: 80px;
+        perspective: 300px;
+      }
+      .preloader-inline__cube {
+        width: 100%; height: 100%;
+        position: relative;
+        transform-style: preserve-3d;
+        animation: pCubeSpin 4s cubic-bezier(0.4,0,0.2,1) infinite;
+      }
+      .preloader-inline__face {
+        position: absolute;
+        width: 80px; height: 80px;
+        border: 1.5px solid rgba(255,59,59,0.35);
+        background: transparent;
+      }
+      .preloader-inline__face--front  { transform: translateZ(40px); }
+      .preloader-inline__face--back   { transform: rotateY(180deg) translateZ(40px); }
+      .preloader-inline__face--left   { transform: rotateY(-90deg) translateZ(40px); }
+      .preloader-inline__face--right  { transform: rotateY(90deg)  translateZ(40px); }
+      .preloader-inline__face--top    { transform: rotateX(90deg)  translateZ(40px); }
+      .preloader-inline__face--bottom { transform: rotateX(-90deg) translateZ(40px); }
+      @keyframes pCubeSpin {
+        0%   { transform: rotateX(-20deg) rotateY(0deg); }
+        25%  { transform: rotateX(10deg)  rotateY(90deg); }
+        50%  { transform: rotateX(-10deg) rotateY(180deg); }
+        75%  { transform: rotateX(15deg)  rotateY(270deg); }
+        100% { transform: rotateX(-20deg) rotateY(360deg); }
+      }
+      .preloader-inline__bar-track {
+        width: 220px; height: 3px;
+        background: rgba(255,255,255,0.08);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .preloader-inline__bar-fill {
+        height: 100%; width: 30%;
+        background: linear-gradient(90deg, #ff3b3b, #ff6b6b);
+        border-radius: 2px;
+        animation: pBarPulse 2s ease-in-out infinite;
+      }
+      @keyframes pBarPulse {
+        0%   { width: 15%; }
+        50%  { width: 55%; }
+        100% { width: 15%; }
+      }
+      .preloader-inline__text {
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 11px;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        color: rgba(255,255,255,0.35);
+      }
+    </style>
   </head>
   <body>
+    <!-- Inline preloader: visible immediately, removed by React once bundle loads -->
+    <div id="preloader-inline" class="preloader-inline">
+      <div class="preloader-inline__content">
+        <div class="preloader-inline__cube-wrap">
+          <div class="preloader-inline__cube">
+            <div class="preloader-inline__face preloader-inline__face--front"></div>
+            <div class="preloader-inline__face preloader-inline__face--back"></div>
+            <div class="preloader-inline__face preloader-inline__face--left"></div>
+            <div class="preloader-inline__face preloader-inline__face--right"></div>
+            <div class="preloader-inline__face preloader-inline__face--top"></div>
+            <div class="preloader-inline__face preloader-inline__face--bottom"></div>
+          </div>
+        </div>
+        <div class="preloader-inline__bar-track">
+          <div class="preloader-inline__bar-fill"></div>
+        </div>
+        <span class="preloader-inline__text">Loading…</span>
+      </div>
+    </div>
+
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
+

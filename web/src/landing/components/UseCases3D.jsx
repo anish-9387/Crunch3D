@@ -96,11 +96,14 @@ export function ArchvizScene() {
 export function UseCaseCanvas({ type }) {
   const [inViewRef, setInViewRef] = useState(null)
   const [inView, setInView] = useState(false)
+  const [hasBeenVisible, setHasBeenVisible] = useState(false)
 
   useEffect(() => {
     if (!inViewRef) return
     const observer = new IntersectionObserver(([entry]) => {
-      setInView(entry.isIntersecting)
+      const visible = entry.isIntersecting
+      setInView(visible)
+      if (visible) setHasBeenVisible(true)
     }, { rootMargin: '200px' })
     observer.observe(inViewRef)
     return () => observer.disconnect()
@@ -108,20 +111,22 @@ export function UseCaseCanvas({ type }) {
 
   return (
     <div ref={setInViewRef} className="w-full h-full absolute inset-0 rounded-[24px] overflow-hidden pointer-events-auto cursor-grab active:cursor-grabbing opacity-90 transition-opacity hover:opacity-100 z-0 flex items-center justify-center">
-      {!inView && (
+      {!hasBeenVisible && (
         <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none">
           <div className="w-6 h-6 border-2 border-[#FF3B3B]/20 border-t-[#FF3B3B] rounded-full animate-spin mb-2" />
           <span className="text-white/30 text-[10px] tracking-widest font-bold">STANDBY</span>
         </div>
       )}
 
-      {inView && (
-        <Canvas camera={{ position: [0, 0, 5], fov: 45 }} gl={{ antialias: true, alpha: true, powerPreference: "default" }} dpr={[1, 1.5]}>
-          {type === 'gaming' && <GamingScene />}
-          {type === 'ecommerce' && <EcommerceScene />}
-          {type === 'arvr' && <ARVRScene />}
-          {type === 'archviz' && <ArchvizScene />}
-        </Canvas>
+      {hasBeenVisible && (
+        <div style={{ visibility: inView ? 'visible' : 'hidden', width: '100%', height: '100%' }}>
+          <Canvas camera={{ position: [0, 0, 5], fov: 45 }} gl={{ antialias: true, alpha: true, powerPreference: "default" }} dpr={[1, 1.5]} frameloop={inView ? 'always' : 'never'}>
+            {type === 'gaming' && <GamingScene />}
+            {type === 'ecommerce' && <EcommerceScene />}
+            {type === 'arvr' && <ARVRScene />}
+            {type === 'archviz' && <ArchvizScene />}
+          </Canvas>
+        </div>
       )}
     </div>
   )
