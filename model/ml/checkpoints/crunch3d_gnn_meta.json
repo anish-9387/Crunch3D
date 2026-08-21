@@ -1,0 +1,15 @@
+{
+  "best_val": 0.010159078985452652,
+  "epoch": 5,
+  "hparams": {
+    "vertex_in_dim": 26,
+    "edge_feat_dim": 11,
+    "hidden_dim": 64,
+    "layers": 3,
+    "dropout": 0.15,
+    "conv_type": "gcn",
+    "two_hop_weight": 0.5,
+    "lap_pe_dim": 16
+  },
+  "train_loss": 0.01143133526460992
+}

@@ -58,7 +58,90 @@ GAMMA: float = 1.5
    Higher → concentrates texels more aggressively onto important faces.
 """
 
+# ── Native simplifier (Action_Plan §37–44) ─────────────────────────────────
+
+SIMPLIFIER_METHOD: str = "pymeshlab"
+"""Default decimation backend.  ``"pymeshlab"`` keeps the production path;
+``"crunch3d"`` routes through the native staged half-edge simplifier."""
+
+COST_MODE: str = "multiplicative"
+"""Eq. 2 combination form.  ``"multiplicative"``: Cost = QEM·(1 + κ·I).
+``"additive"``: Cost = QEM_norm + λ·I (numerically stable alternative, §38)."""
+
+COST_LAMBDA: float = 1.0
+"""λ for the additive cost form."""
+
+IMPORTANCE_AGGREGATE: str = "max"
+"""How per-vertex importance becomes per-edge importance: ``max`` follows
+crunch3d-v2 Eq. 5 (I(e) = max(I(v_i), I(v_j))); ``mean`` is the softer variant."""
+
+STAGES: int = 4
+"""Staged-inference tranches (§40).  1 = one-shot prediction (control arm)."""
+
+FLIP_THRESHOLD: float = 0.2
+"""Reject a collapse when any surviving face normal turns by more than
+acos(0.2) ≈ 78°."""
+
+MIN_AREA_RATIO: float = 1e-4
+"""Reject a collapse producing a face smaller than this fraction of the mean
+original face area."""
+
+MAX_ASPECT_RATIO: float = 50.0
+"""Reject a collapse producing a sliver with max_edge² / (2·area) above this."""
+
+BOUNDARY_QUADRIC_WEIGHT: float = 1000.0
+"""Weight of the virtual boundary plane added to the quadrics (§8.6)."""
+
+# ── Graph / model (Action_Plan §13–16, §127) ───────────────────────────────
+
+LAP_PE_DIM: int = 16
+"""Laplacian positional-encoding dimensions."""
+
+TWO_HOP_WEIGHT: float = 0.5
+"""λ_2hop in the dual-path fusion h = h_1hop + λ·h_2hop (§15)."""
+
+TWO_HOP_MAX_DEGREE: int = 32
+"""Per-node cap on 2-hop neighbours, to bound graph memory (§114)."""
+
+CONV_TYPE: str = "gcn"
+"""Vertex-encoder convolution: gcn | sage | gatv2 | mlp (§63 ablation)."""
+
+HIDDEN_DIM: int = 64
+GNN_LAYERS: int = 3
+DROPOUT: float = 0.15
+
+# ── Losses (§21, §127) ─────────────────────────────────────────────────────
+
+LOSS_REGRESSION: float = 1.0
+LOSS_RANKING: float = 0.25
+LOSS_SAFETY: float = 1.0
+RANK_MARGIN: float = 0.05
+SAFETY_FLOOR: float = 0.7
+"""Minimum importance the model must predict on hard-constraint edges (§20 C)."""
+
+# ── Oracle label weights (§35) ─────────────────────────────────────────────
+
+ORACLE_WEIGHTS: dict[str, float] = {
+    "qem": 0.35,
+    "normal": 0.20,
+    "curvature": 0.15,
+    "topology": 0.15,
+    "uv": 0.05,
+    "material": 0.05,
+    "skin": 0.05,
+}
+"""α/β/γ/δ of §35, extended with the asset-aware penalties of §19."""
+
+ORACLE_CANDIDATES: tuple[int, int, int] = (32, 64, 128)
+"""K candidate edges per mesh state, by size bucket (§34)."""
+
+STAGE_RATIOS: tuple[float, ...] = (1.0, 0.75, 0.5, 0.25)
+"""Simplification stages sampled per source mesh for the dataset (§29–30)."""
+
+SEED: int = 42
+
 # ── Existing configuration (migrated) ─────────────────────────────────────
+
 
 MAX_FILE_SIZE_MB: int = 50
 """Maximum upload file size in megabytes."""
