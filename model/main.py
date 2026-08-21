@@ -1,3 +1,7 @@
+from pathlib import Path as _Path
+from dotenv import load_dotenv as _load_dotenv
+_load_dotenv(_Path(__file__).resolve().parent.parent / ".env")
+
 import asyncio
 import os
 
