@@ -42,6 +42,7 @@ def _write_meta(meta_path: Path, model, dataset_size: int) -> None:
                     "num_parameters": sum(p.numel() for p in model.parameters()),
                     "dataset_size": dataset_size,
                 },
+                f,
                 ensure_ascii=True,
             )
     except Exception as exc:
