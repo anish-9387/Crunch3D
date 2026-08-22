@@ -108,6 +108,42 @@ export async function getImportanceMap(jobId) {
   return response.data;
 }
 
+/**
+ * Optimize only the region painted with the refactor brush.
+ *
+ * `stamps` are in bbox-normalised model space (see lib/brushSelection.js);
+ * `clientExtents` is the viewer's bbox extents over its bbox diagonal, which
+ * the backend uses to confirm both sides agree on the model's axes before it
+ * edits anything.
+ */
+export async function brushRefine({
+  jobId,
+  stamps,
+  reductionPercent,
+  falloff,
+  preserveNormals,
+  preserveBoundaries,
+  fromLatest,
+  clientExtents,
+}) {
+  const response = await api.post("/brush/refine", {
+    job_id: jobId,
+    stamps: stamps.map((s) => ({
+      center: s.center,
+      radius: s.radius,
+      erase: !!s.erase,
+      strength: s.strength ?? 1,
+    })),
+    reduction_percent: reductionPercent ?? 40,
+    falloff: falloff || "smooth",
+    preserve_normals: preserveNormals !== false,
+    preserve_boundaries: preserveBoundaries !== false,
+    from_latest: fromLatest !== false,
+    client_extents: clientExtents ?? null,
+  });
+  return response.data;
+}
+
 export async function getLearningStatus() {
   const response = await api.get("/learning/status");
   return response.data;

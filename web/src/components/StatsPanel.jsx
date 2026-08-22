@@ -9,6 +9,7 @@ export default function StatsPanel({
   qualityMeta,
   downloadUrl,
   edgeFeatures,
+  brushSummary,
   onDownload,
   quota,
   downloading,
@@ -156,6 +157,34 @@ export default function StatsPanel({
             {qualityMeta.guardRelaxed && (
               <div style={{ color: 'var(--text-secondary)' }}>
                 Quality lock increased face count above requested target to preserve model structure.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {brushSummary && (
+        <div className="card">
+          <h3>Brush Refine Report</h3>
+          <div style={{ display: 'grid', gap: 8, fontSize: 13 }}>
+            <div>
+              Painted region: {brushSummary.selectedFaces.toLocaleString()} faces
+              {brushSummary.regionPercent != null && ` (${brushSummary.regionPercent}% of mesh)`}
+            </div>
+            <div>Faces removed in region: {brushSummary.facesRemoved.toLocaleString()}</div>
+            <div>
+              Parts touched: {brushSummary.componentsRefined} of {brushSummary.componentsTotal}
+            </div>
+            <div style={{ color: 'var(--text-secondary)' }}>
+              {brushSummary.regionMode === 'selected_faces'
+                ? 'Geometry outside the painted region was left unchanged.'
+                : 'Region selection was unavailable, so unpainted geometry was protected by importance weighting instead.'}
+            </div>
+            {brushSummary.regionEscalated && (
+              <div style={{ color: 'var(--text-secondary)' }}>
+                The region's importance scores were too uniform to rank edges, so
+                the reduction was driven by geometric error instead. The area
+                outside the region was still left untouched.
               </div>
             )}
           </div>

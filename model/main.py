@@ -104,6 +104,7 @@ async def root():
         "endpoints": {
             "upload": "POST /api/upload",
             "optimize": "POST /api/optimize",
+            "brush_refine": "POST /api/brush/refine",
             "recommend": "GET /api/recommend/{job_id}",
             "status": "GET /api/status/{job_id}",
             "importance": "GET /api/importance/{job_id}",

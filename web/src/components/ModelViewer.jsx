@@ -2,12 +2,14 @@ import { useState, Suspense, useEffect, useMemo, useRef, useCallback } from 'rea
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls, Center, Grid, GizmoHelper, GizmoViewport } from '@react-three/drei'
 import * as THREE from 'three'
+import { thinStroke } from '../lib/brushSelection'
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js'
 import { STLLoader } from 'three/addons/loaders/STLLoader.js'
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js'
 import ModelInspector from './ModelInspector'
+import BrushLayer, { BrushPanel } from './BrushRefineTool'
 import { getImportanceMap } from '../api/client'
 
 function importanceToColor(t) {
@@ -144,13 +146,14 @@ function CameraReporter({ onCameraChange }) {
   return null
 }
 
-function MeshFromUrl({ url, filename, wireframe, importanceEnabled, importanceScores, onModelReady, onModelError, viewerName }) {
+function MeshFromUrl({ url, filename, wireframe, importanceEnabled, importanceScores, onModelReady, onModelError, onObjectReady, viewerName }) {
   const [object, setObject] = useState(null)
 
   useEffect(() => {
     if (!url) return
     let cancelled = false
     setObject(null)
+    onObjectReady?.(null)
     onModelError?.(null)
     const ext = filename?.split('.').pop()?.toLowerCase()
     const manager = new THREE.LoadingManager()
@@ -171,6 +174,7 @@ function MeshFromUrl({ url, filename, wireframe, importanceEnabled, importanceSc
       console.groupEnd()
       setObject(obj)
       onModelReady?.(collectModelSummary(obj))
+      onObjectReady?.(obj)
     }
 
     function onError(err) {
@@ -202,6 +206,7 @@ function MeshFromUrl({ url, filename, wireframe, importanceEnabled, importanceSc
 
     return () => {
       cancelled = true
+      onObjectReady?.(null)
       // Dispose previous object's geometry to prevent stale render artifacts
       setObject((prev) => {
         if (prev) {
@@ -214,7 +219,7 @@ function MeshFromUrl({ url, filename, wireframe, importanceEnabled, importanceSc
         return null
       })
     }
-  }, [url, filename, onModelReady, onModelError])
+  }, [url, filename, onModelReady, onModelError, onObjectReady])
 
   const material = useMemo(() => {
     if (importanceEnabled && importanceScores) {
@@ -258,14 +263,27 @@ function MeshFromUrl({ url, filename, wireframe, importanceEnabled, importanceSc
       const vertCount = pos.count
       const sliceEnd = vertexOffset + vertCount
 
-      if (sliceEnd > importanceScores.length) {
+      if (vertexOffset >= importanceScores.length) {
         console.warn(
           `[Importance] Slice [${vertexOffset}, ${sliceEnd}) exceeds score array length ${importanceScores.length}`
         )
         return
       }
 
-      const meshScores = importanceScores.slice(vertexOffset, sliceEnd)
+      let meshScores = importanceScores.slice(vertexOffset, Math.min(sliceEnd, importanceScores.length))
+      if (meshScores.length < vertCount) {
+        // Trimesh vs three vertex count can differ by welding/ordering; pad
+        // the tail so the mesh still gets a heatmap instead of staying grey.
+        const padded = new Array(vertCount).fill(0)
+        for (let i = 0; i < meshScores.length; i++) padded[i] = meshScores[i]
+        // fill remainder with the last available score to avoid a hard 0
+        const fill = meshScores.length ? meshScores[meshScores.length - 1] : 0.5
+        for (let i = meshScores.length; i < vertCount; i++) padded[i] = fill
+        meshScores = padded
+        console.warn(
+          `[Importance] Slice [${vertexOffset}, ${sliceEnd}) truncated to ${meshScores.length} (total ${importanceScores.length})`
+        )
+      }
       const colors = new Float32Array(vertCount * 3)
       for (let i = 0; i < vertCount; i++) {
         const [r, g, b] = importanceToColor(meshScores[i])
@@ -318,7 +336,10 @@ function MeshFromUrl({ url, filename, wireframe, importanceEnabled, importanceSc
   )
 }
 
-function Scene({ url, filename, wireframe, importanceEnabled, importanceScores, onModelReady, onModelError, onCameraChange, performanceMode, viewerName }) {
+function Scene({ url, filename, wireframe, importanceEnabled, importanceScores, onModelReady, onModelError, onCameraChange, performanceMode, viewerName, brush }) {
+  const [brushObject, setBrushObject] = useState(null)
+  const handleObjectReady = useCallback((obj) => setBrushObject(obj), [])
+
   return (
     <>
       <ambientLight intensity={0.7} />
@@ -334,10 +355,20 @@ function Scene({ url, filename, wireframe, importanceEnabled, importanceScores, 
             importanceScores={importanceScores}
             onModelReady={onModelReady}
             onModelError={onModelError}
+            onObjectReady={brush ? handleObjectReady : undefined}
             viewerName={viewerName}
           />
         )}
       </Suspense>
+      {brush && (
+        <BrushLayer
+          object={brushObject}
+          active={brush.active}
+          settings={brush.settings}
+          strokeRef={brush.strokeRef}
+          onCounts={brush.onCounts}
+        />
+      )}
       <CameraReporter onCameraChange={onCameraChange} />
       <OrbitControls makeDefault enableDamping dampingFactor={0.1} />
       
@@ -403,6 +434,7 @@ export default function ModelViewer({
   performanceMode,
   hasImportanceMap,
   jobId,
+  onBrushRefine,
 }) {
   const [wireframe, setWireframe] = useState(false)
   const [splitView, setSplitView] = useState(false)
@@ -412,6 +444,22 @@ export default function ModelViewer({
   const [cameraInfo, setCameraInfo] = useState(null)
   const [viewerError, setViewerError] = useState(null)
   const cameraCacheRef = useRef({})
+
+  // ── Refactor brush ──────────────────────────────────────────────────────
+  const [brushActive, setBrushActive] = useState(false)
+  const [brushSettings, setBrushSettings] = useState({
+    radius: 0.08,          // fraction of the model's bbox diagonal
+    erase: false,
+    falloff: 'smooth',
+    strength: 1,
+    reductionPercent: 40,
+    clearToken: 0,
+  })
+  const [brushCounts, setBrushCounts] = useState({ vertices: 0, faces: 0, totalFaces: 0 })
+  const [brushBusy, setBrushBusy] = useState(false)
+  const [brushError, setBrushError] = useState(null)
+  const [brushResult, setBrushResult] = useState(null)
+  const brushStrokeRef = useRef({ stamps: [], frame: null })
 
   const canShowImportance = hasImportanceMap && !!originalUrl
 
@@ -481,6 +529,67 @@ export default function ModelViewer({
     setModelSummary(summary)
   }, [])
 
+  const handleBrushCounts = useCallback((counts) => setBrushCounts(counts), [])
+
+  const canBrush = !!onBrushRefine && !!jobId && !showSplit && !importanceEnabled && !processing
+  const brushOn = brushActive && canBrush
+
+  function toggleBrush() {
+    if (!canBrush && !brushActive) return
+    setBrushActive((on) => {
+      const next = !on
+      if (next) {
+        setImportanceEnabled(false)
+        setSplitView(false)
+      }
+      setBrushError(null)
+      setBrushResult(null)
+      return next
+    })
+  }
+
+  function clearBrush() {
+    setBrushError(null)
+    setBrushResult(null)
+    setBrushSettings((s) => ({ ...s, clearToken: s.clearToken + 1 }))
+  }
+
+  async function applyBrush() {
+    const stroke = brushStrokeRef.current
+    if (!stroke?.stamps?.length || brushBusy) return
+
+    setBrushBusy(true)
+    setBrushError(null)
+    setBrushResult(null)
+    try {
+      const response = await onBrushRefine({
+        stamps: thinStroke(stroke.stamps),
+        // The frame's normalised extents let the backend verify both sides
+        // agree on the model's axes before it edits anything.
+        clientExtents: stroke.frame?.extents ?? null,
+        reductionPercent: brushSettings.reductionPercent,
+        falloff: brushSettings.falloff,
+      })
+      setBrushResult(response?.message || 'Region optimized')
+      setBrushSettings((s) => ({ ...s, clearToken: s.clearToken + 1 }))
+    } catch (err) {
+      setBrushError(
+        err?.response?.data?.detail || err?.message || 'Region optimization failed'
+      )
+    } finally {
+      setBrushBusy(false)
+    }
+  }
+
+  const brushProps = canBrush
+    ? {
+        active: brushOn,
+        settings: brushSettings,
+        strokeRef: brushStrokeRef,
+        onCounts: handleBrushCounts,
+      }
+    : null
+
   return (
     <div className="viewer-layout">
       <div className="viewer-area">
@@ -494,19 +603,44 @@ export default function ModelViewer({
           {optimizedUrl && (
             <button
               className={`viewer-btn ${splitView ? 'active' : ''}`}
-              onClick={() => setSplitView(!splitView)}
+              onClick={() => {
+                setSplitView((on) => {
+                  if (!on) setBrushActive(false)
+                  return !on
+                })
+              }}
             >
               Split View
             </button>
           )}
           <button
             className={`viewer-btn ${importanceEnabled ? 'active' : ''}`}
-            onClick={() => canShowImportance && setImportanceEnabled(!importanceEnabled)}
+            onClick={() => {
+              if (!canShowImportance) return
+              setImportanceEnabled((on) => {
+                if (!on) setBrushActive(false)
+                return !on
+              })
+            }}
             disabled={!canShowImportance}
             title={!canShowImportance ? 'Run optimization first to generate importance map' : 'Toggle importance heatmap'}
           >
             Importance Map
           </button>
+          {onBrushRefine && (
+            <button
+              className={`viewer-btn ${brushOn ? 'active' : ''}`}
+              onClick={toggleBrush}
+              disabled={!canBrush && !brushActive}
+              title={
+                canBrush
+                  ? 'Paint the areas that are still too dense, then optimize just those'
+                  : 'Exit split view and the importance map to use the brush'
+              }
+            >
+              Refactor Brush
+            </button>
+          )}
         </div>
 
       {showSplit ? (
@@ -580,9 +714,22 @@ export default function ModelViewer({
               onModelError={handleModelError}
               onCameraChange={handleCameraChange}
               performanceMode={performanceMode}
+              brush={brushProps}
               viewerName={importanceEnabled ? 'Importance Map' : (optimizedUrl ? 'Optimized' : 'Original')} />
           </Canvas>
           {importanceEnabled && <ImportanceLegend />}
+          {brushOn && (
+            <BrushPanel
+              settings={brushSettings}
+              onSettingsChange={setBrushSettings}
+              counts={brushCounts}
+              onClear={clearBrush}
+              onApply={applyBrush}
+              applying={brushBusy}
+              error={brushError}
+              result={brushResult}
+            />
+          )}
         </div>
       )}
 

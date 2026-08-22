@@ -2,6 +2,7 @@ import json
 import time
 import zipfile
 import io
+import re
 import logging
 import asyncio
 from pathlib import Path
@@ -14,6 +15,7 @@ from .schemas import (
     UploadResponse, OptimizeRequest, OptimizeResponse, JobStatus,
     OptimizationRecommendationResponse,
     MeshStats, EdgeFeatureStat, EdgeFeatureSummary,
+    BrushRefineRequest, BrushRefineResponse,
 )
 from ..services.file_handler import (
     generate_job_id, get_upload_path, get_processed_path,
@@ -622,6 +624,242 @@ async def get_importance_map(job_id: str):
     if scores is None:
         raise HTTPException(404, "No importance map available for this job")
     return ImportanceResponse(scores=scores, vertex_count=len(scores))
+
+
+# ---------------------------------------------------------------------------
+# Refactor brush — region-local optimization
+# ---------------------------------------------------------------------------
+
+def _run_brush_refine(
+    input_path: str,
+    output_path: str,
+    stamps_payload: list[dict],
+    reduction_percent: float,
+    falloff: str,
+    preserve_normals: bool,
+    preserve_boundaries: bool,
+    client_extents: list[float] | None,
+) -> tuple:
+    """Process-pool entry point for the brush pass (must stay importable)."""
+    from ..engine.brush_refine import refine_region
+    from ..engine.brush_selection import stamps_from_payload
+
+    return refine_region(
+        input_path=input_path,
+        output_path=output_path,
+        stamps=stamps_from_payload(stamps_payload),
+        reduction_percent=reduction_percent,
+        falloff=falloff,
+        preserve_normals=preserve_normals,
+        preserve_boundaries=preserve_boundaries,
+        client_extents=client_extents,
+    )
+
+
+_REFINED_SUFFIX = re.compile(r"_refined(\d*)$")
+
+
+def _next_refined_stem(stem: str) -> str:
+    """``foo`` -> ``foo_refined`` -> ``foo_refined2`` -> ``foo_refined3`` ...
+
+    Chained brush passes read the previous pass's output, so appending a fresh
+    suffix each time would grow ``foo_refined_refined_refined`` without bound.
+    Counting instead keeps the name readable and, unlike reusing the same name,
+    still writes to a different file than the one being read — a failed export
+    can never leave the job with no mesh at all.
+    """
+    match = _REFINED_SUFFIX.search(stem)
+    if match is None:
+        return f"{stem}_refined"
+    n = int(match.group(1)) if match.group(1) else 1
+    return f"{stem[:match.start()]}_refined{n + 1}"
+
+
+def _discard_superseded_output(job_id: str, path: Path, keep: Path) -> None:
+    """Delete a processed mesh (and its sidecars) that a brush pass replaced.
+
+    Only ever called for files the pass itself read out of ``processed/``, and
+    never for *keep* — the output just written.  Keeping the directory to a
+    single current mesh matters because ``/download`` zips everything it finds
+    there, so a stale intermediate would end up in the user's archive.
+    """
+    stale = [
+        f for f in path.parent.glob(f"{path.stem}.*")
+        if f.is_file() and f.resolve() != keep.resolve()
+    ]
+    for f in stale:
+        try:
+            f.unlink()
+        except OSError as exc:
+            logger.warning("Could not remove superseded output %s: %s", f.name, exc)
+
+    if stale and storage.is_enabled():
+        storage.delete_objects([storage.key_processed(job_id, f.name) for f in stale])
+
+
+@router.post("/brush/refine", response_model=BrushRefineResponse)
+async def brush_refine(request: BrushRefineRequest):
+    """Optimize only the region the user painted with the refactor brush.
+
+    An add-on to ``/optimize`` rather than a variant of it: the whole-model
+    budget pass is untouched, and this endpoint exists for the case it cannot
+    serve — a patch the importance map left denser than the user wanted.  On
+    failure the job keeps the output it already had, so a missed stroke costs
+    nothing but the request.
+    """
+    from ..engine.brush_refine import BrushSelectionError
+    from .schemas import TextureExportInfo
+
+    job = _get_job(request.job_id)
+    base_original_stats = job.get("original_stats")
+    if base_original_stats is None:
+        raise HTTPException(400, "Job has no analyzed source mesh")
+
+    latest_stats = job.get("optimized_stats")
+    using_latest = bool(
+        request.from_latest
+        and job.get("status") == "completed"
+        and latest_stats is not None
+        and job.get("output_path") is not None
+    )
+    source_stats = latest_stats if using_latest else base_original_stats
+
+    input_path = Path(job["output_path"] if using_latest else job["filepath"])
+    if storage.is_enabled() and not input_path.exists():
+        input_key = (
+            storage.key_processed(request.job_id, input_path.name)
+            if using_latest
+            else storage.key_upload(request.job_id, input_path.name)
+        )
+        if not storage.download_file(input_key, input_path):
+            raise HTTPException(500, "Input mesh is unavailable in cloud storage")
+    if not input_path.exists():
+        raise HTTPException(404, "Input mesh for this job is no longer available")
+
+    output_dir = get_processed_path(request.job_id)
+    output_ext = resolve_output_extension(input_path.suffix.lower())
+    output_filename = f"{_next_refined_stem(input_path.stem)}{output_ext}"
+    output_path = output_dir / output_filename
+
+    start_time = time.time()
+    try:
+        import functools
+        from concurrent.futures import ProcessPoolExecutor
+        import multiprocessing
+
+        loop = asyncio.get_running_loop()
+        with ProcessPoolExecutor(
+            max_workers=1, mp_context=multiprocessing.get_context("spawn")
+        ) as executor:
+            refined_stats, meta = await loop.run_in_executor(
+                executor,
+                functools.partial(
+                    _run_brush_refine,
+                    input_path=str(input_path),
+                    output_path=str(output_path),
+                    stamps_payload=[s.model_dump() for s in request.stamps],
+                    reduction_percent=request.reduction_percent,
+                    falloff=request.falloff,
+                    preserve_normals=request.preserve_normals,
+                    preserve_boundaries=request.preserve_boundaries,
+                    client_extents=request.client_extents,
+                ),
+            )
+    except BrushSelectionError as exc:
+        # The selection itself was the problem — nothing was written and the
+        # job still points at its previous output.
+        raise HTTPException(422, str(exc))
+    except Exception as exc:
+        import traceback as _tb
+
+        detail = str(exc) or _tb.format_exc() or "Unknown error"
+        logger.error("Brush refine failed for job %s: %s", request.job_id, detail)
+        raise HTTPException(422, f"Brush refine failed: {detail}")
+
+    processing_time = round(time.time() - start_time, 2)
+
+    if using_latest:
+        _discard_superseded_output(request.job_id, input_path, output_path)
+
+    reduction = 0.0
+    if base_original_stats.face_count > 0:
+        reduction = round(
+            (1 - refined_stats.face_count / base_original_stats.face_count) * 100, 1
+        )
+
+    jobs[request.job_id] = job
+    job["status"] = "completed"
+    job["progress"] = 100
+    job["stage"] = "Brush refine complete"
+    job["optimized_stats"] = refined_stats
+    job["output_path"] = str(output_path)
+    job["optimized_filename"] = output_filename
+    job["optimized_format"] = output_ext.lstrip(".")
+    job["reduction_percent"] = reduction
+    job["processing_time_seconds"] = processing_time
+    job["brush_refine"] = {
+        "selected_vertex_count": meta["selected_vertex_count"],
+        "selected_face_count": meta["selected_face_count"],
+        "region_percent": meta["region_percent"],
+        "faces_removed": meta["faces_removed"],
+        "region_mode": meta["region_mode"],
+        "region_escalated": meta.get("region_escalated", False),
+        "reduction_percent_requested": meta["reduction_percent_requested"],
+    }
+    texture_export_info = meta.get("texture_export_info")
+    if texture_export_info is not None:
+        job["texture_export"] = texture_export_info
+    # Keep heatmap live after brush — original's importance is still valid for
+    # originalUrl (ModelViewer shows original when importanceEnabled). Don't drop.
+    _save_job(request.job_id)
+
+    missing_uploads: list[str] = []
+    for f in output_dir.iterdir():
+        if f.is_file():
+            if not storage.upload_file(storage.key_processed(request.job_id, f.name), f):
+                missing_uploads.append(f.name)
+    if storage.is_enabled() and missing_uploads:
+        raise HTTPException(
+            500, f"Failed to upload refined output to cloud storage: {missing_uploads}"
+        )
+
+    if isinstance(texture_export_info, dict):
+        texture_export_info = TextureExportInfo(**texture_export_info)
+
+    message = (
+        f"Refined {meta['selected_face_count']:,} painted faces "
+        f"({meta['region_percent']}% of the mesh): "
+        f"{meta['faces_before']:,} -> {meta['faces_after']:,} faces, "
+        f"{meta['faces_removed']:,} removed"
+    )
+    if meta["region_mode"] == "weighted_region":
+        message += " | region selection unavailable, used importance weighting only"
+    if meta.get("region_escalated"):
+        message += " | region importance was uniform, reduced on geometric error"
+    if meta["components_refined"] < meta["components_total"]:
+        untouched = meta["components_total"] - meta["components_refined"]
+        message += f" | {untouched} unpainted part(s) left untouched"
+
+    return BrushRefineResponse(
+        job_id=request.job_id,
+        source="latest_output" if using_latest else "original",
+        original_stats=source_stats,
+        optimized_stats=refined_stats,
+        optimized_filename=output_filename,
+        optimized_format=output_ext.lstrip("."),
+        selected_vertex_count=meta["selected_vertex_count"],
+        selected_face_count=meta["selected_face_count"],
+        region_percent=meta["region_percent"],
+        faces_removed=meta["faces_removed"],
+        reduction_percent=reduction,
+        components_refined=meta["components_refined"],
+        components_total=meta["components_total"],
+        region_mode=meta["region_mode"],
+        region_escalated=bool(meta.get("region_escalated", False)),
+        processing_time_seconds=processing_time,
+        texture_export=texture_export_info,
+        message=message,
+    )
 
 
 def _stream_from_cloud(job_id: str) -> StreamingResponse | None:

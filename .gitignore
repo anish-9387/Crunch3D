@@ -14,6 +14,7 @@ dist/
 model/uploads/
 model/processed/
 model/learning/training_data/
+model/training/
 
 # IDE
 .vscode/

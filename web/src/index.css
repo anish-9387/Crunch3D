@@ -551,6 +551,125 @@ input[type="range"] {
   height: 100%;
 }
 
+/* Refactor brush — tool settings docked over the canvas, because brush size and
+   mode only make sense while looking at the surface being painted. */
+.brush-panel {
+  position: absolute;
+  top: 48px;
+  right: 12px;
+  z-index: 12;
+  width: 232px;
+  max-height: calc(100% - 64px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-card) 94%, transparent);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow);
+  color: var(--text-primary);
+}
+
+.brush-panel-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+
+.brush-hint {
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.brush-mode-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.brush-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.brush-field b {
+  color: var(--text-primary);
+  font-family: "JetBrains Mono", monospace;
+}
+
+.brush-field input[type="range"] {
+  width: 100%;
+}
+
+.brush-readout {
+  padding: 7px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-soft) 80%, transparent);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.brush-readout b {
+  color: var(--accent);
+  font-family: "JetBrains Mono", monospace;
+}
+
+.brush-actions {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px;
+}
+
+.brush-apply-btn {
+  padding: 8px 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.brush-apply-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.brush-apply-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.brush-error,
+.brush-result {
+  padding: 8px 9px;
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+.brush-error {
+  border: 1px solid var(--danger);
+  background: color-mix(in srgb, var(--bg-card) 84%, transparent);
+}
+
+.brush-result {
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-soft) 80%, transparent);
+  color: var(--text-secondary);
+}
+
 .processing-overlay {
   position: absolute;
   inset: 0;
@@ -1161,6 +1280,17 @@ input[type="range"] {
 @media (max-width: 940px) {
   .main-layout {
     grid-template-columns: 1fr;
+  }
+
+  /* Narrow canvases cannot spare a docked column, so the brush panel spans the
+     full width at the bottom where it will not cover what is being painted. */
+  .brush-panel {
+    top: auto;
+    bottom: 10px;
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-height: 52%;
   }
 
   .viewer-container,

@@ -6,6 +6,7 @@ import StatsPanel from './components/StatsPanel'
 import Navbar from './landing/components/Navbar'
 import {
   optimizeMesh,
+  brushRefine,
   downloadResult,
   getDownloadUrl,
   getPreviewUrl,
@@ -60,6 +61,8 @@ export default function DemoApp({ onBackToHome }) {
   const [processingTime, setProcessingTime] = useState(null)
   const [qualityMeta, setQualityMeta] = useState(null)
   const [edgeFeatures, setEdgeFeatures] = useState(null)
+  const [brushSummary, setBrushSummary] = useState(null)
+  const [hasImportanceMap, setHasImportanceMap] = useState(false)
   const [recommendation, setRecommendation] = useState(null)
   const [error, setError] = useState(null)
   const [quota, setQuota] = useState(null)
@@ -149,6 +152,8 @@ export default function DemoApp({ onBackToHome }) {
     setLods(null)
     setQualityMeta(null)
     setEdgeFeatures(null)
+    setBrushSummary(null)
+    setHasImportanceMap(false)
     setError(null)
 
     // Set slider max to original face count
@@ -191,6 +196,8 @@ export default function DemoApp({ onBackToHome }) {
       setProcessingTime(result.processing_time_seconds)
       setOptimizedFilename(result.optimized_filename)
       setEdgeFeatures(result.edge_features ?? null)
+      setHasImportanceMap(true)
+      setBrushSummary(null)
       setQualityMeta({
         strictQuality,
         targetRequested: targetFaces,
@@ -215,6 +222,52 @@ export default function DemoApp({ onBackToHome }) {
     }
   }
 
+  /**
+   * Run the region-local brush pass and adopt its output as the current result.
+   *
+   * Errors are re-thrown so the brush panel can show them in place: a missed
+   * stroke is the tool's own feedback, not a failure of the whole job, and the
+   * backend leaves the previous output untouched in that case.
+   */
+  async function handleBrushRefine({ stamps, clientExtents, reductionPercent, falloff }) {
+    if (!jobId) return null
+
+    const result = await brushRefine({
+      jobId,
+      stamps,
+      reductionPercent,
+      falloff,
+      preserveNormals,
+      preserveBoundaries,
+      // Refine whatever the viewer is showing: the optimized output when one
+      // exists, otherwise the original upload.
+      fromLatest: !!optimizedUrl,
+      clientExtents,
+    })
+
+    setOptimizedStats(result.optimized_stats)
+    setOptimizedFilename(result.optimized_filename)
+    setProcessingTime(result.processing_time_seconds)
+    setOptimizedUrl(getPreviewUrl(jobId))
+    // The quality-lock report described the whole-model pass; it no longer
+    // describes the mesh on screen, so it goes rather than showing stale numbers.
+    setQualityMeta(null)
+    setBrushSummary({
+      selectedFaces: result.selected_face_count,
+      selectedVertices: result.selected_vertex_count,
+      regionPercent: result.region_percent,
+      facesRemoved: result.faces_removed,
+      componentsRefined: result.components_refined,
+      componentsTotal: result.components_total,
+      regionMode: result.region_mode,
+      regionEscalated: result.region_escalated,
+      processingTime: result.processing_time_seconds,
+    })
+    setError(null)
+
+    return result
+  }
+
   function handleReset() {
     setJobId(null)
     setFilename(null)
@@ -227,6 +280,8 @@ export default function DemoApp({ onBackToHome }) {
     setProcessingTime(null)
     setQualityMeta(null)
     setEdgeFeatures(null)
+    setBrushSummary(null)
+    setHasImportanceMap(false)
     setRecommendation(null)
     setError(null)
   }
@@ -310,8 +365,9 @@ export default function DemoApp({ onBackToHome }) {
               processing={processing}
               stage={stage}
               performanceMode={performanceMode}
-              hasImportanceMap={!!optimizedStats}
+              hasImportanceMap={hasImportanceMap}
               jobId={jobId}
+              onBrushRefine={handleBrushRefine}
             />
 
             {error && <div className="error-msg">{error}</div>}
@@ -323,6 +379,7 @@ export default function DemoApp({ onBackToHome }) {
               processingTime={processingTime}
               qualityMeta={qualityMeta}
               edgeFeatures={edgeFeatures}
+              brushSummary={brushSummary}
               downloadUrl={optimizedStats ? getDownloadUrl(jobId) : null}
               onDownload={handleDownload}
               quota={quota}
