@@ -53,7 +53,7 @@ RETRAIN_INTERVAL_SECONDS = int(os.getenv("LEARNING_RETRAIN_INTERVAL_MINUTES", "3
 MIN_NEW_SAMPLES = int(os.getenv("LEARNING_MIN_NEW_SAMPLES", "5"))
 RETRAIN_EPOCHS = int(os.getenv("LEARNING_RETRAIN_EPOCHS", "12"))
 
-_lock = threading.Lock()
+_lock = threading.RLock()
 
 
 # ---------------------------------------------------------------------------

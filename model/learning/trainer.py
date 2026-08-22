@@ -86,6 +86,8 @@ def train(
     """
     try:
         import torch
+        # Avoid OpenMP thread deadlock on MacOS when running in a thread pool
+        torch.set_num_threads(1)
     except ImportError as e:
         raise ImportError(
             "Training requires 'torch'. Install with: pip install torch"

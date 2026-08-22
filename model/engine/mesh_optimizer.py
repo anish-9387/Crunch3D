@@ -467,18 +467,9 @@ def _inject_importance_as_quality(ms: pymeshlab.MeshSet, importance: np.ndarray)
     PyMeshLab's weighted QEM reads from this field when qualityweight=True.
     Higher quality = protected from collapse.
 
-    This is done fully in-memory:
-
-      1. Write importance as grey-scale vertex colours through the writable
-         ``vertex_color_matrix()`` numpy view (R=G=B=importance, A=1).
-      2. Derive the quality scalar from the colour channel with
-         ``compute_scalar_by_function_per_vertex``: q = (r+g+b)/(3*255).
-      3. Restore the mesh's original vertex colours.
-
-    Unlike the old PLY round-trip, the mesh is never written to disk, so UV
-    coordinates, materials and texture maps are preserved exactly — a model
-    with a texture keeps that texture, and a model with baked vertex colours
-    keeps those colours.
+    This is done fully in-memory by adding a custom scalar attribute and
+    using the compute_scalar_by_function_per_vertex filter to copy it
+    into the primary quality scalar.
 
     Returns True if the injection succeeded, False if decimation will run
     without the quality scalar.
@@ -494,20 +485,16 @@ def _inject_importance_as_quality(ms: pymeshlab.MeshSet, importance: np.ndarray)
 
     try:
         mesh = ms.current_mesh()
-        colors = mesh.vertex_color_matrix()          # (N, 4) writable view
-
-        original_colors = np.array(colors, copy=True)
-        rgb = np.column_stack([quality, quality, quality, np.ones_like(quality)])
-        colors[:] = rgb
-
+        
+        # Add as a custom attribute (name must be unique to this MeshSet run)
+        mesh.add_vertex_custom_scalar_attribute(quality, "crunch3d_importance")
+        
+        # Copy the custom attribute into the mesh's quality field
         ms.apply_filter(
             "compute_scalar_by_function_per_vertex",
-            q="(r+g+b)/(3*255)",
+            q="crunch3d_importance",
             normalize=False,
         )
-
-        # Restore original colours so texture/colour output is untouched.
-        colors[:] = original_colors
         return True
 
     except Exception as exc:
