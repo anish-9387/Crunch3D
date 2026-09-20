@@ -1,5 +1,5 @@
 import React from 'react';
-import footerMascot from '../../assets/footer.png';
+const footerMascot = '/assets/footer.png';
 
 export default function FooterSection() {
   return (
@@ -60,7 +60,7 @@ export default function FooterSection() {
             {/* Column 1: Brand & Socials */}
             <div className="col-span-2 md:col-span-4 lg:col-span-4 flex flex-col gap-5 md:gap-6 items-start text-left">
               <div className="flex items-center gap-2">
-                <img src="../../assets/logo.png" alt="Crunch3D Logo" className="w-8 h-8" onError={(e) => e.target.style.display = 'none'} />
+                <img src="/assets/logo.png" alt="Crunch3D Logo" className="w-8 h-8" onError={(e) => e.target.style.display = 'none'} />
                 <span className="text-white font-black text-2xl tracking-tight" style={{ fontFamily: "'Fredoka', sans-serif" }}>CRUNCH3D</span>
               </div>
               

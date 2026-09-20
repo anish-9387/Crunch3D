@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import logo from '../../assets/logo.png'
-import heroImage from '../../assets/heroImage.png'
+const logo = '/assets/logo.png';
+const heroImage = '/assets/heroImage.png';
 import ProductSection from './ProductSection'
 import UseCasesSection from './UseCasesSection'
 import Navbar from './Navbar'
