@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import DemoApp from './DemoApp'
 import LandingPage from './landing/LandingPage'
-import Preloader from './components/Preloader'
 
 const DEMO_PATH = '/demo'
 const MOBILE_LAST_PATH_KEY = 'crunch3d-mobile-last-path'
@@ -28,17 +27,6 @@ function getInitialPath() {
 
 export default function App() {
   const [path, setPath] = useState(getInitialPath)
-  const [loaded, setLoaded] = useState(false)
-
-  const handlePreloaderComplete = useCallback(() => {
-    // Remove the inline HTML preloader from the DOM
-    const inlinePreloader = document.getElementById('preloader-inline')
-    if (inlinePreloader) {
-      inlinePreloader.classList.add('hidden')
-      setTimeout(() => inlinePreloader.remove(), 600)
-    }
-    setLoaded(true)
-  }, [])
 
   useEffect(() => {
     const handlePopState = () => setPath(normalizePath(window.location.pathname))
@@ -89,13 +77,10 @@ export default function App() {
 
   return (
     <>
-      <Preloader onComplete={handlePreloaderComplete} />
-
-      {loaded && (
-        path === DEMO_PATH
-          ? <DemoApp onBackToHome={openHome} />
-          : <LandingPage onTryDemo={openDemo} onGenerateLods={openDemo} />
-      )}
+      {path === DEMO_PATH
+        ? <DemoApp onBackToHome={openHome} />
+        : <LandingPage onTryDemo={openDemo} onGenerateLods={openDemo} />
+      }
     </>
   )
 }
