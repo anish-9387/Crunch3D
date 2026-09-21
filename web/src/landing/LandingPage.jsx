@@ -44,12 +44,12 @@ export default function LandingPage({ onTryDemo }) {
                   Try Crunch3D
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="lg:w-[16px] lg:h-[16px]"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
                 </button>
-                <button className="w-full sm:w-[170px] lg:w-[220px] h-[46px] lg:h-[56px] justify-center bg-gradient-to-b from-white/30 to-white/5 backdrop-blur-xl border border-white/30 rounded-full font-light lg:font-semibold flex items-center gap-2 lg:gap-3 hover:from-white/40 hover:to-white/10 transition-all active:scale-95 text-[12px] lg:text-base shadow-[0_15px_25px_-5px_rgba(0,0,0,0.2),inset_0_4px_6px_rgba(255,255,255,0.4),inset_0_-4px_6px_rgba(0,0,0,0.1)] whitespace-nowrap text-white">
+                <a href="https://drive.google.com/file/d/1x-3gV_UtNdBh5WAfDCDK4AtYNk9HewL0/view?usp=drive_link" target="_blank" rel="noopener noreferrer" className="w-full sm:w-[170px] lg:w-[220px] h-[46px] lg:h-[56px] justify-center bg-gradient-to-b from-white/30 to-white/5 backdrop-blur-xl border border-white/30 rounded-full font-light lg:font-semibold flex items-center gap-2 lg:gap-3 hover:from-white/40 hover:to-white/10 transition-all active:scale-95 text-[12px] lg:text-base shadow-[0_15px_25px_-5px_rgba(0,0,0,0.2),inset_0_4px_6px_rgba(255,255,255,0.4),inset_0_-4px_6px_rgba(0,0,0,0.1)] whitespace-nowrap text-white">
                   <div className="bg-gradient-to-b from-white/50 to-white/20 rounded-full w-6 h-6 lg:w-7 lg:h-7 flex items-center justify-center pl-[2px] shadow-[inset_0_1px_2px_rgba(255,255,255,0.8)] border border-white/20">
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="lg:w-[12px] lg:h-[12px]"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                   </div>
                   Watch Demo
-                </button>
+                </a>
               </div>
 
               <div className="hidden lg:flex mt-auto pt-16 flex-col items-start gap-4 w-full">

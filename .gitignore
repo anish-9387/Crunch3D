@@ -23,3 +23,8 @@ model/training/
 # OS
 .DS_Store
 Thumbs.db
+model/learning/checkpoints/crunch3d_gnn_model_meta.json
+model/learning/checkpoints/crunch3d_gnn_model.pt
+model/training/optimization_events.jsonl
+model/data/usage.db-shm
+model/data/usage.db-wal

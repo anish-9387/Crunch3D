@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import DemoApp from './DemoApp'
+import DemoUnavailable from './DemoUnavailable'
 import LandingPage from './landing/LandingPage'
 
 const DEMO_PATH = '/demo'
@@ -78,7 +78,7 @@ export default function App() {
   return (
     <>
       {path === DEMO_PATH
-        ? <DemoApp onBackToHome={openHome} />
+        ? <DemoUnavailable onBackToHome={openHome} />
         : <LandingPage onTryDemo={openDemo} onGenerateLods={openDemo} />
       }
     </>
